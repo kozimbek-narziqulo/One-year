@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Flower">
+  <!-- App icon: full-bleed opaque square (no transparency, as iOS requires). The system rounds the corners. -->
+  <rect width="1024" height="1024" fill="#A23B5C"/>
+  <g fill="#FBF7F2">
+    <ellipse cx="512" cy="347" rx="108" ry="170"/>
+    <ellipse cx="512" cy="347" rx="108" ry="170" transform="rotate(72 512 512)"/>
+    <ellipse cx="512" cy="347" rx="108" ry="170" transform="rotate(144 512 512)"/>
+    <ellipse cx="512" cy="347" rx="108" ry="170" transform="rotate(216 512 512)"/>
+    <ellipse cx="512" cy="347" rx="108" ry="170" transform="rotate(288 512 512)"/>
+  </g>
+  <circle cx="512" cy="512" r="82" fill="#F2B84B"/>
+</svg>

@@ -1,0 +1,72 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+html {
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-default);
+  font-size: var(--text-base);
+  line-height: var(--text-base-line);
+  /* Установленное приложение на iPhone рисует под вырезом и жестовой полосой: оставляем им место. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+h1, h2, h3 {
+  font-weight: 600;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button, input, select, textarea {
+  font: inherit;
+}
+
+/* Поля ввода не меньше 16px: иначе Safari на iPhone увеличивает страницу при фокусе. */
+input, select, textarea {
+  font-size: max(16px, 1em);
+}
+
+.font-entry {
+  font-family: var(--font-entry);
+  line-height: var(--text-entry-line);
+}
+
+/* Окна записи и копий: на узком экране панель снизу, на широком диалог по центру. */
+dialog.entry-dialog {
+  color: var(--text);
+}
+@media (max-width: 639.98px) {
+  dialog.entry-dialog {
+    inset: auto 0 0 0;
+  }
+}
+dialog.entry-dialog::backdrop {
+  background: var(--scrim);
+}
+dialog.entry-dialog[open] {
+  animation: sheet-in var(--duration-base) var(--ease-standard);
+}
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Рост растения при сохранении записи (700 мс, токен duration-grow). */
+.plant.grow .stem { stroke-dasharray: 60; stroke-dashoffset: 60; animation: plant-stem var(--duration-grow) var(--ease-emphasized) forwards; }
+.plant.grow .leaf { transform-box: fill-box; transform-origin: center bottom; transform: scale(0); animation: plant-pop calc(var(--duration-grow) * .45) var(--ease-emphasized) calc(var(--duration-grow) * .3) forwards; }
+.plant.grow .bloom, .plant.grow .core { transform-box: fill-box; transform-origin: center; transform: scale(0); animation: plant-pop calc(var(--duration-grow) * .45) var(--ease-emphasized) calc(var(--duration-grow) * .55) forwards; }
+@keyframes plant-stem { to { stroke-dashoffset: 0; } }
+@keyframes plant-pop { to { transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .plant.grow .stem, .plant.grow .leaf, .plant.grow .bloom, .plant.grow .core { animation: none; stroke-dashoffset: 0; transform: none; }
+  dialog.entry-dialog[open] { animation: none; }
+}
