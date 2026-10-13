@@ -42,6 +42,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {children}
         <PwaRegister />
       </body>
-    </html lang="ru" className={hand.variable}>
+    <html lang="ru" className={hand.variable}>
   );
 }
