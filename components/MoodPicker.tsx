@@ -3,21 +3,13 @@
 import { useRef, type KeyboardEvent } from "react";
 import { MOOD_VALUES, type Mood } from "../lib/types.ts";
 import { MOOD_LABELS } from "../lib/moods.ts";
-import { MoodFace } from "./MoodFace.tsx";
 
-const IDLE: Record<Mood, string> = {
-  1: "border-mood-1 text-mood-1",
-  2: "border-mood-2 text-mood-2",
-  3: "border-mood-3 text-mood-3",
-  4: "border-mood-4 text-mood-4",
-  5: "border-mood-5 text-mood-5",
-};
-const ACTIVE: Record<Mood, string> = {
-  1: "border-mood-1 bg-mood-1 text-on-mood-1",
-  2: "border-mood-2 bg-mood-2 text-on-mood-2",
-  3: "border-mood-3 bg-mood-3 text-on-mood-3",
-  4: "border-mood-4 bg-mood-4 text-on-mood-4",
-  5: "border-mood-5 bg-mood-5 text-on-mood-5",
+const DOT: Record<Mood, string> = {
+  1: "bg-mood-1",
+  2: "bg-mood-2",
+  3: "bg-mood-3",
+  4: "bg-mood-4",
+  5: "bg-mood-5",
 };
 
 export interface MoodPickerProps {
@@ -25,7 +17,7 @@ export interface MoodPickerProps {
   onChange: (m: Mood | null) => void;
 }
 
-/** Пять ступеней настроения. Цвет не единственный носитель: у каждой есть лицо и слово. */
+/** Пять ступеней настроения — цветные точки. Цвет не единственный носитель: выбранная точка крупнее, под рядом подпись словом. */
 export function MoodPicker({ value, onChange }: MoodPickerProps) {
   const group = useRef<HTMLDivElement>(null);
 
@@ -43,7 +35,7 @@ export function MoodPicker({ value, onChange }: MoodPickerProps) {
 
   return (
     <div>
-      <div ref={group} role="radiogroup" aria-label="Настроение дня" onKeyDown={onKeyDown} className="flex gap-2">
+      <div ref={group} role="radiogroup" aria-label="Настроение дня" onKeyDown={onKeyDown} className="-ml-2 flex">
         {MOOD_VALUES.map((m) => {
           const selected = value === m;
           return (
@@ -56,16 +48,19 @@ export function MoodPicker({ value, onChange }: MoodPickerProps) {
               data-mood={m}
               tabIndex={selected || (value === null && m === 1) ? 0 : -1}
               onClick={() => onChange(selected ? null : m)}
-              className={`grid size-12 place-items-center rounded-full border-2 transition-colors duration-(--duration-fast) max-[360px]:size-11 ${
-                selected ? ACTIVE[m] : `bg-transparent hover:bg-accent-subtle ${IDLE[m]}`
-              }`}
+              className="group grid size-11 place-items-center rounded-full outline-offset-0"
             >
-              <MoodFace mood={m} className="size-6" />
+              <span
+                aria-hidden="true"
+                className={`block size-5 rounded-full transition-all duration-(--duration-fast) ${DOT[m]} ${
+                  selected ? "scale-[1.5]" : value === null ? "group-hover:scale-110" : "opacity-45 group-hover:opacity-100"
+                }`}
+              />
             </button>
           );
         })}
       </div>
-      <p className="mt-2 text-sm text-text-muted" aria-live="polite">
+      <p className="mt-1 text-sm text-text-muted" aria-live="polite">
         {value ? MOOD_LABELS[value] : "Настроение не выбрано"}
       </p>
     </div>
