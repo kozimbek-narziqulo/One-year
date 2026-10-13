@@ -33,16 +33,8 @@ if(s.moodPalette==="cvd")r.setAttribute("data-mood-palette","cvd");
 if(s.plantPalette==="autumn"||s.plantPalette==="ink")r.setAttribute("data-plant-palette",s.plantPalette)}catch(e){}`;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
-  return (
+    return (
     <html lang="ru" className={hand.variable}>
-      {/* тут идет твой body, PwaRegister и остальной код */}
-    </html>
-  );
-}
-    <html lang="ru" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-      </head>
       <body>
         {children}
         <PwaRegister />
@@ -50,3 +42,4 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     </html>
   );
 }
+    
