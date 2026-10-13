@@ -4,49 +4,128 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getPhotoStore, getRepo, useGardenState, useToday } from "../hooks/useGarden.ts";
 import { APP_NAME } from "../lib/brand.ts";
 import { compareKeys, daysElapsed, daysInYear, formatShort, yearOf, type DateKey } from "../lib/date.ts";
+import { plantSeedOf, shiftKey } from "../lib/dayKeys.ts";
 import { referencedPhotoIds } from "../lib/photos.ts";
 import { shouldNudgeBackup } from "../lib/repo.ts";
 import { LIMITS, type Entry } from "../lib/types.ts";
 import { BackupPanel } from "./BackupPanel.tsx";
 import { EntryModal } from "./EntryModal.tsx";
-import { GardenField, type FocusRequest } from "./GardenField.tsx";
+import { GardenDots } from "./GardenDots.tsx";
+import { IconFlower, IconGardenGroup, PlantIcon } from "./GardenIcons.tsx";
 import { MemoryFeed } from "./MemoryFeed.tsx";
 import { Toast, type ToastData } from "./Toast.tsx";
 import { Button, IconButton, IconChevronLeft, IconChevronRight, IconSettings } from "./ui.tsx";
 
 const DEFAULT_MIN_YEAR = 2000;
+// Свайп: минимум 50 px по горизонтали и заметно больше, чем по вертикали.
+const SWIPE_MIN_PX = 50;
+const SWIPE_RATIO = 1.5;
 
-type View = "garden" | "feed";
+type View = "today" | "garden" | "feed";
 
-function ViewButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+/* ---------- маленькие части интерфейса ---------- */
+
+function NavButton({ active, label, onClick, children }: { active: boolean; label: string; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       type="button"
+      aria-label={label}
       aria-pressed={active}
       onClick={onClick}
-      className={`min-h-(--layout-tapMin) rounded-sm px-4 text-base ${active ? "bg-accent-subtle text-text" : "text-text-muted"}`}
+      className={`grid h-[4.25rem] w-[4.5rem] place-items-center rounded-2xl transition-colors duration-(--duration-fast) ${
+        active ? "bg-[#5b3dff] text-white" : "text-[#6b4dff]"
+      }`}
     >
       {children}
     </button>
   );
 }
 
-function GardenSkeleton() {
+/** Большая кнопка «+» посередине экрана «Сегодня». */
+function PlantButton({ hasEntry, onClick }: { hasEntry: boolean; onClick: () => void }) {
   return (
-    <div className="grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2 md:grid-cols-3" aria-hidden="true">
-      {Array.from({ length: 6 }, (_, i) => (
-        <div key={i} className="animate-pulse">
-          <div className="mb-3 h-5 w-24 rounded-sm bg-border" />
-          <div className="grid grid-cols-7 gap-1">
-            {Array.from({ length: 35 }, (_, j) => (
-              <div key={j} className="aspect-square rounded-cell bg-border opacity-50" />
-            ))}
-          </div>
-        </div>
-      ))}
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex flex-col items-center gap-3 rounded-3xl p-4 font-mono text-xl text-[#5b3dff] transition-transform duration-(--duration-fast) active:scale-95"
+    >
+      <span className="relative grid size-24 place-items-center">
+        <svg
+          viewBox="0 0 96 96"
+          className="absolute inset-0 size-full"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={3}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          focusable={false}
+        >
+          <path d="M47 7C27 5 8 20 8 45c0 22 20 42 42 41 22-1 38-20 37-42C86 22 68 8 47 7Z" />
+          {!hasEntry && <path d="M48 30v36M30 48h36" />}
+        </svg>
+        {hasEntry && <IconFlower className="relative size-12 text-[#9a85ff]" />}
+      </span>
+      {hasEntry ? "Открыть запись" : "Посадить воспоминание"}
+    </button>
+  );
+}
+
+/** Полоска дней сверху: три прошедших дня точками и сегодняшний день в рамке по центру. */
+function DayStrip({ today, marked, onOpen }: { today: DateKey; marked: ReadonlySet<string>; onOpen: (key: DateKey) => void }) {
+  const past = [-3, -2, -1].map((n) => shiftKey(today, n));
+  const todayMarked = marked.has(today);
+  return (
+    <div className="pt-4">
+      <h1 className="mb-2 text-center font-mono text-base">Сегодня</h1>
+      <ul className="grid grid-cols-7 items-center">
+        {past.map((key) => (
+          <li key={key} className="grid place-items-center">
+            <button
+              type="button"
+              onClick={() => onOpen(key)}
+              aria-label={`${formatShort(key)}${marked.has(key) ? ", есть запись" : ", записи нет"}`}
+              className="grid size-11 place-items-center rounded-full"
+            >
+              {marked.has(key) ? <PlantIcon seed={plantSeedOf(key)} className="size-6 text-[#9a85ff]" /> : <span className="size-1 rounded-full bg-current" />}
+            </button>
+          </li>
+        ))}
+        <li className="grid place-items-center">
+          <button
+            type="button"
+            onClick={() => onOpen(today)}
+            aria-label={`Сегодня, ${formatShort(today)}${todayMarked ? ", есть запись" : ", записи нет"}`}
+            aria-current="date"
+            className="grid aspect-square w-[88%] place-items-center rounded-[1.4rem] border border-[#5b3dff]/40 bg-[#5b3dff]/15"
+          >
+            {todayMarked ? <PlantIcon seed={plantSeedOf(today)} className="size-7 text-[#9a85ff]" /> : <span className="size-1 rounded-full bg-current" />}
+          </button>
+        </li>
+        {[0, 1, 2].map((i) => (
+          <li key={i} aria-hidden="true" />
+        ))}
+      </ul>
     </div>
   );
 }
+
+function Skeleton() {
+  return (
+    <main className="grid h-dvh place-items-center bg-[#02001a] text-[#5b3dff]">
+      <div className="text-center">
+        <h1 className="font-mono text-xl">{APP_NAME}</h1>
+        <div className="mt-4 flex justify-center gap-6" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <span key={i} className="size-1.5 animate-pulse rounded-full bg-current" style={{ animationDelay: `${i * 150}ms` }} />
+          ))}
+        </div>
+      </div>
+    </main>
+  );
+}
+
+/* ---------- главный компонент ---------- */
 
 export function GardenApp() {
   const state = useGardenState();
@@ -54,36 +133,26 @@ export function GardenApp() {
   const repo = state ? getRepo() : null;
   const photoStore = state ? getPhotoStore() : null;
 
-  const [view, setView] = useState<View>("garden");
+  const [view, setView] = useState<View>("today");
   const [viewYear, setViewYear] = useState<number | null>(null);
   const [modalDate, setModalDate] = useState<DateKey | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [toast, setToast] = useState<ToastData | null>(null);
   const [planted, setPlanted] = useState<DateKey | null>(null);
-  const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
-  const [showRemaining, setShowRemaining] = useState(false);
   const toastId = useRef(0);
-  const initialScroll = useRef(false);
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
   const year = viewYear ?? (today ? yearOf(today) : null);
   const settings = state?.settings;
 
-  // Настройки внешнего вида -> атрибуты на <html> (до первой отрисовки их уже выставил скрипт в layout).
+  // Палитры из настроек -> атрибуты на <html>. Новый дизайн только тёмный, поэтому тему фиксируем.
   useEffect(() => {
     if (!settings) return;
     const root = document.documentElement;
-    if (settings.theme === "system") root.removeAttribute("data-theme");
-    else root.setAttribute("data-theme", settings.theme);
+    root.setAttribute("data-theme", "dark");
     root.setAttribute("data-mood-palette", settings.moodPalette);
     root.setAttribute("data-plant-palette", settings.plantPalette);
   }, [settings]);
-
-  // При первом показе прокручиваем к сегодняшнему дню.
-  useEffect(() => {
-    if (initialScroll.current || !state || !today) return;
-    initialScroll.current = true;
-    setFocusRequest({ key: today, focus: false, n: 1 });
-  }, [state, today]);
 
   // Раз за запуск убираем фото, на которые не ссылается ни одна запись (см. PhotoStore.sweep).
   // Состояние берём свежее, в момент уборки. Если записи не загрузились или не сохраняются, не трогаем ничего:
@@ -117,6 +186,9 @@ export function GardenApp() {
     [today, showToast],
   );
 
+  // Даты, на которые есть запись (для точек и цветов).
+  const marked = useMemo<ReadonlySet<string>>(() => new Set(state ? Object.keys(state.entries) : []), [state]);
+
   // Самый ранний год, до которого можно дойти: не раньше самой старой записи (например, из импортированной копии).
   const minYear = useMemo(() => {
     let min = DEFAULT_MIN_YEAR;
@@ -130,24 +202,13 @@ export function GardenApp() {
     return Object.keys(state.entries).filter((k) => k.startsWith(prefix)).length;
   }, [state, year]);
 
-  if (!state || !repo || !photoStore || !today || year === null) {
-    return (
-      <main className="mx-auto w-full max-w-(--layout-gardenMax) px-(--layout-gutter) py-6">
-        <h1 className="mb-6 text-xl">{APP_NAME}</h1>
-        <GardenSkeleton />
-      </main>
-    );
-  }
+  if (!state || !repo || !photoStore || !today || year === null) return <Skeleton />;
 
   const thisYear = yearOf(today);
   const elapsed = daysElapsed(year, today);
   const total = daysInYear(year);
   const nudge = shouldNudgeBackup(state, Date.now());
-
-  function goToday() {
-    setViewYear(thisYear);
-    setFocusRequest((r) => ({ key: today as DateKey, focus: true, n: (r?.n ?? 0) + 1 }));
-  }
+  const todayHasEntry = marked.has(today);
 
   function onSaved(entry: Entry, wasNew: boolean) {
     setModalDate(null);
@@ -157,12 +218,10 @@ export function GardenApp() {
     showToast(wasNew ? "Записано. Растение уже в саду." : "Запись обновлена.");
     // Просим браузер не вычищать данные при нехватке места; ответ нам не важен.
     void navigator.storage?.persist?.().catch(() => undefined);
-    setFocusRequest((r) => ({ key: entry.date, focus: true, n: (r?.n ?? 0) + 1 }));
   }
 
   function onDeleted(entry: Entry) {
     setModalDate(null);
-    setFocusRequest((r) => ({ key: entry.date, focus: true, n: (r?.n ?? 0) + 1 }));
     showToast(`Запись за ${formatShort(entry.date)} удалена.`, {
       ms: LIMITS.undoDeleteMs,
       action: {
@@ -178,82 +237,54 @@ export function GardenApp() {
     });
   }
 
+  // Свайп влево открывает «Сад», вправо возвращает на «Сегодня». Вертикальная прокрутка остаётся за браузером (touch-pan-y).
+  function onPointerUp(e: React.PointerEvent) {
+    const start = swipeStart.current;
+    swipeStart.current = null;
+    if (!start) return;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * SWIPE_RATIO) return;
+    setView(dx < 0 ? "garden" : "today");
+  }
+
+  const pageStyle = (active: boolean) => ({
+    visibility: active ? ("visible" as const) : ("hidden" as const),
+    // Скрываем неактивную страницу от фокуса и экранных читалок только после окончания анимации.
+    transition: `visibility 0s linear ${active ? "0s" : "0.3s"}`,
+  });
+
   return (
     <>
-      <main className="mx-auto w-full max-w-(--layout-gardenMax) px-(--layout-gutter) pb-24 pt-4">
-        <header className="mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-          {view === "garden" ? (
-            <div className="flex items-center gap-1">
-              <IconButton label="Предыдущий год" disabled={year <= minYear} onClick={() => setViewYear(year - 1)}>
-                <IconChevronLeft />
-              </IconButton>
-              <h1 className="text-xl tabular-nums" aria-live="polite">
-                {year}
-              </h1>
-              <IconButton label="Следующий год" disabled={year >= thisYear} onClick={() => setViewYear(year + 1)}>
-                <IconChevronRight />
-              </IconButton>
-            </div>
+      <main className="flex h-dvh flex-col bg-[#02001a] text-[#5b3dff]">
+        {/* Верхняя строка: лента слева, копия и настройки справа */}
+        <header className="flex min-h-14 items-center justify-between px-(--layout-gutter) pt-[env(safe-area-inset-top)]">
+          {view === "feed" ? (
+            <Button variant="ghost" onClick={() => setView("today")}>
+              Назад
+            </Button>
           ) : (
-            <h1 className="text-xl">Лента воспоминаний</h1>
+            <Button variant="ghost" onClick={() => setView("feed")}>
+              Лента
+            </Button>
           )}
-          <div className="flex items-center gap-2">
-            {view === "garden" && (
-              <Button variant="ghost" onClick={goToday}>
-                К сегодня
-              </Button>
-            )}
-            <IconButton label="Копия и настройки" onClick={() => setPanelOpen(true)}>
-              <IconSettings />
-            </IconButton>
-          </div>
+          <IconButton label="Копия и настройки" onClick={() => setPanelOpen(true)}>
+            <IconSettings />
+          </IconButton>
         </header>
 
-        <div role="group" aria-label="Вид" className="mb-4 inline-flex rounded-md border border-border p-0.5">
-          <ViewButton active={view === "garden"} onClick={() => setView("garden")}>
-            Сад
-          </ViewButton>
-          <ViewButton active={view === "feed"} onClick={() => setView("feed")}>
-            Лента
-          </ViewButton>
-        </div>
-
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          {view === "garden" ? (
-            <p className="text-sm text-text-muted">
-              <span className="tabular-nums">
-                Записей: {entryCountThisYear} из {total}
-              </span>
-              {" · "}
-              <button
-                type="button"
-                onClick={() => setShowRemaining((v) => !v)}
-                className="min-h-6 rounded-sm tabular-nums underline"
-                aria-label={showRemaining ? "Показать, сколько дней прошло" : "Показать, сколько дней осталось"}
-              >
-                {showRemaining ? `осталось ${total - elapsed} дн.` : `прошло ${elapsed} дн.`}
-              </button>
-            </p>
-          ) : (
-            <p className="text-sm tabular-nums text-text-muted">Записей: {Object.keys(state.entries).length}</p>
-          )}
-          <Button variant="primary" onClick={() => openDate(today)}>
-            Записать этот день
-          </Button>
-        </div>
-
         {!state.persistent && (
-          <p role="status" className="mb-4 rounded-md border border-warning p-3 text-sm text-warning">
+          <p role="status" className="mx-(--layout-gutter) mb-3 rounded-md border border-warning p-3 text-sm text-warning">
             Браузер не сохраняет данные сайта (возможно, приватный режим). Записи пропадут при закрытии вкладки. Сохраните копию файлом.
           </p>
         )}
         {state.loadProblem && (
-          <p role="alert" className="mb-4 rounded-md border border-danger p-3 text-sm text-danger">
+          <p role="alert" className="mx-(--layout-gutter) mb-3 rounded-md border border-danger p-3 text-sm text-danger">
             Часть сохранённых записей не удалось прочитать. Исходный текст отложен в хранилище браузера и не стёрт. Сохраните копию и обратитесь за помощью, прежде чем что-то менять.
           </p>
         )}
         {nudge && (
-          <div role="region" aria-label="Напоминание о копии" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md bg-accent-subtle p-3 text-base">
+          <div role="region" aria-label="Напоминание о копии" className="mx-(--layout-gutter) mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md bg-accent-subtle p-3 text-base text-text">
             <p>Давно не было копии. Сохраните файл, на случай если телефон потеряется.</p>
             <div className="flex gap-2">
               <Button variant="primary" onClick={() => setPanelOpen(true)}>
@@ -265,25 +296,73 @@ export function GardenApp() {
             </div>
           </div>
         )}
-        {view === "garden" && Object.keys(state.entries).length === 0 && (
-          <p className="mb-4 rounded-md border border-border bg-surface p-4 text-base">
-            Пока здесь одни семена. Начнём с сегодняшнего дня?
-          </p>
+
+        {view === "feed" ? (
+          <section className="min-h-0 flex-1 overflow-y-auto px-(--layout-gutter) pb-32 text-text">
+            <h1 className="mb-1 text-xl">Лента воспоминаний</h1>
+            <p className="mb-4 text-sm tabular-nums text-text-muted">Записей: {Object.keys(state.entries).length}</p>
+            <MemoryFeed entries={state.entries} store={photoStore} onOpen={openDate} />
+          </section>
+        ) : (
+          <div
+            className="relative min-h-0 flex-1 touch-pan-y overflow-hidden"
+            onPointerDown={(e) => {
+              swipeStart.current = { x: e.clientX, y: e.clientY };
+            }}
+            onPointerUp={onPointerUp}
+            onPointerCancel={() => {
+              swipeStart.current = null;
+            }}
+          >
+            <div
+              className="flex h-full w-[200%] transition-transform duration-300 ease-out motion-reduce:transition-none"
+              style={{ transform: view === "garden" ? "translateX(-50%)" : "translateX(0)" }}
+            >
+              {/* Экран «Сегодня» */}
+              <section className="flex h-full w-1/2 flex-col px-(--layout-gutter) pb-32" style={pageStyle(view === "today")}>
+                <DayStrip today={today} marked={marked} onOpen={openDate} />
+                <div className="grid flex-1 place-items-center">
+                  <PlantButton hasEntry={todayHasEntry} onClick={() => openDate(today)} />
+                </div>
+              </section>
+
+              {/* Экран «Сад»: полотно точек */}
+              <section className="h-full w-1/2 overflow-y-auto px-(--layout-gutter) pb-32" style={pageStyle(view === "garden")}>
+                <div className="flex items-center justify-center gap-2 pb-5 pt-2">
+                  <IconButton label="Предыдущий год" disabled={year <= minYear} onClick={() => setViewYear(year - 1)}>
+                    <IconChevronLeft />
+                  </IconButton>
+                  <h1 className="rounded-full bg-[#5b3dff] px-8 py-2 font-mono text-xl tabular-nums text-white" aria-live="polite">
+                    {year}
+                  </h1>
+                  <IconButton label="Следующий год" disabled={year >= thisYear} onClick={() => setViewYear(year + 1)}>
+                    <IconChevronRight />
+                  </IconButton>
+                </div>
+
+                {Object.keys(state.entries).length === 0 && <p className="mb-4 text-center font-mono text-sm">Пока здесь одни семена. Начнём с сегодняшнего дня?</p>}
+
+                <GardenDots year={year} today={today} marked={marked} plantedKey={planted} onOpen={openDate} />
+
+                <p className="mt-6 text-center font-mono text-xs tabular-nums opacity-70">
+                  Записей: {entryCountThisYear} из {total} · прошло {elapsed} дн.
+                </p>
+              </section>
+            </div>
+          </div>
         )}
 
-        {view === "garden" ? (
-          <GardenField
-            year={year}
-            entries={state.entries}
-            today={today}
-            density={state.settings.density}
-            plantedKey={planted}
-            focusRequest={focusRequest}
-            onOpen={openDate}
-          />
-        ) : (
-          <MemoryFeed entries={state.entries} store={photoStore} onOpen={openDate} />
-        )}
+        {/* Нижняя панель: Сад / Сегодня */}
+        <nav aria-label="Разделы" className="pointer-events-none fixed inset-x-0 bottom-0 z-10 flex justify-center pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="pointer-events-auto flex gap-1 rounded-3xl border border-[#5b3dff]/30 bg-[#16103f]/80 p-1.5 backdrop-blur">
+            <NavButton active={view === "garden"} label="Сад" onClick={() => setView("garden")}>
+              <IconGardenGroup className="h-8 w-14" />
+            </NavButton>
+            <NavButton active={view === "today"} label="Сегодня" onClick={() => setView("today")}>
+              <IconFlower className="size-9" />
+            </NavButton>
+          </div>
+        </nav>
       </main>
 
       {modalDate && (
