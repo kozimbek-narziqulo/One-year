@@ -18,6 +18,12 @@ export interface PhotoRef {
 }
 
 export interface Entry {
+  export interface Entry {
+  id: string;
+  date: string;
+  // ... твои остальные поля
+  shapeId?: number; // <--- Добавь эту строку
+}
   date: DateKey; // первичный ключ: одна запись в день
   body: string;
   mood: Mood | null;
