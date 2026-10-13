@@ -1,15 +1,33 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { CalendarDays, Camera, ImagePlus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { Camera, ImagePlus, Trash2 } from "lucide-react";
 import { compareKeys, formatLong, formatShort, isValidKey, type DateKey } from "../lib/date.ts";
 import { GardenError, LIMITS, type Entry, type Mood } from "../lib/types.ts";
 import type { Repo } from "../lib/repo.ts";
 import { itemsOf, sameItems, saveEntryWithPhotos, type PhotoItem } from "../lib/entryPhotos.ts";
 import type { PhotoStore } from "../lib/photos.ts";
 import { MoodPicker } from "./MoodPicker.tsx";
+import { MoodFlower } from "./MoodFlower.tsx";
 import { PhotoGallery, usePhotoPicker } from "./PhotoStrip.tsx";
 import { Button, IconButton, IconClose } from "./ui.tsx";
+
+/** Тексты окна в одном месте: поменяйте на русский, если нужно. */
+const T = {
+  placeholder: "Start writing",
+  done: "Done",
+  today: "Сегодня",
+  moodTitle: "How are you feeling today?",
+} as const;
+
+/** Сине-фиолетовый акцент окна (обводка иконок, кнопка Done, точка в квадрате). */
+const INK = "#5a3df5";
+
+/** Рукописный шрифт. Подключите настоящий через --font-hand (см. пояснение), иначе сработают системные. */
+const FORM_STYLE = {
+  fontFamily: "var(--font-hand, 'Bradley Hand', 'Segoe Print', 'Comic Sans MS', cursive)",
+  "--ink": INK,
+} as CSSProperties;
 
 export interface EntryModalProps {
   repo: Repo;
@@ -46,16 +64,23 @@ function saveErrorText(e: unknown): string {
   return "Не удалось сохранить. Текст остался на экране.";
 }
 
-/** Круглая иконка-кнопка нижней панели: без рамки и фона, только иконка. */
-const TOOL_BTN =
-  "grid min-h-(--layout-tapMin) min-w-(--layout-tapMin) place-items-center rounded-full text-text-muted transition-colors hover:text-text disabled:opacity-40 disabled:hover:text-text-muted";
+/** Квадратная кнопка-иконка нижней панели: прозрачная, обводка и иконка сине-фиолетовые. */
+const SQUARE_BTN =
+  "grid size-12 place-items-center rounded-xl border-[1.5px] border-(color:--ink) bg-transparent text-(color:--ink) transition-opacity disabled:opacity-35";
+
+/** Залитая кнопка «Done». */
+const DONE_BTN =
+  "min-h-12 rounded-xl bg-(--ink) px-8 text-xl leading-none text-white transition-opacity active:opacity-80 disabled:opacity-40";
 
 export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSaved, onDeleted }: EntryModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const mainRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const dateInputRef = useRef<HTMLInputElement>(null);
+  const sheetDoneRef = useRef<HTMLButtonElement>(null);
   const titleId = useId();
   const bodyId = useId();
+  const sheetTitleId = useId();
 
   const [date, setDate] = useState<DateKey>(initialDate);
   const [form, setForm] = useState<Form>(EMPTY);
@@ -64,6 +89,8 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** write — пишем; mood — окно с цветком и настроением, оно видно только перед сохранением. */
+  const [step, setStep] = useState<"write" | "mood">("write");
   const formRef = useRef(form);
   formRef.current = form;
   const dateRef = useRef(date);
@@ -114,16 +141,44 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     if (!dlg) return;
     load(initialDate);
     if (!dlg.open) dlg.showModal();
-    const hasEntry = repo.getEntry(initialDate) !== null;
-    requestAnimationFrame(() => {
-      if (hasEntry) dlg.querySelector<HTMLElement>('[role="radio"][tabindex="0"]')?.focus();
-      else textRef.current?.focus();
-    });
+    requestAnimationFrame(() => textRef.current?.focus());
     return () => {
       if (dlg.open) dlg.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // На телефоне окно занимает видимую область над клавиатурой: панель с иконками и «Done» не прячется под ней.
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    const vv = window.visualViewport;
+    if (!dlg || !vv) return;
+    const wide = window.matchMedia("(min-width: 640px)");
+    const apply = () => {
+      if (wide.matches) {
+        dlg.style.removeProperty("top");
+        dlg.style.removeProperty("height");
+        return;
+      }
+      dlg.style.top = `${vv.offsetTop}px`;
+      dlg.style.height = `${vv.height}px`;
+    };
+    apply();
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    wide.addEventListener("change", apply);
+    return () => {
+      vv.removeEventListener("resize", apply);
+      vv.removeEventListener("scroll", apply);
+      wide.removeEventListener("change", apply);
+    };
+  }, []);
+
+  // Пока открыто окно с цветком, остальное недоступно для фокуса и скринридера.
+  useEffect(() => {
+    if (mainRef.current) mainRef.current.inert = step === "mood";
+    if (step === "mood") requestAnimationFrame(() => sheetDoneRef.current?.focus());
+  }, [step]);
 
   // Автосохранение черновика с задержкой.
   useEffect(() => {
@@ -146,13 +201,12 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     };
   }, [flushDraft]);
 
-  // Поле текста растёт по содержимому, до 12 строк (минимальная высота задана классом).
+  // Поле текста растёт по содержимому; прокручивается вся область записи.
   useEffect(() => {
     const el = textRef.current;
     if (!el) return;
     el.style.height = "auto";
-    const line = parseFloat(getComputedStyle(el).lineHeight) || 26;
-    el.style.height = `${Math.min(el.scrollHeight, line * 12 + 24)}px`;
+    el.style.height = `${el.scrollHeight}px`;
   }, [form.body]);
 
   function changeDate(next: string) {
@@ -199,6 +253,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     } catch (e) {
       setError(saveErrorText(e));
       setSaving(false);
+      setStep("write"); // ошибка показывается на экране записи
     }
   }
 
@@ -223,44 +278,53 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
 
   const canSave = form.body.trim() !== "" || form.mood !== null || form.photos.length > 0;
   const dirty = !same(form, baseOf(existing)) || !sameItems(form.photos, baseOf(existing).photos);
-  const isPast = compareKeys(date, today) < 0;
   const canAddPhoto = !saving && photoStore.available && picker.room > 0;
   const hasPhotos = form.photos.length > 0;
+  const dateLabel = date === today ? T.today : formatShort(date);
 
   return (
     <dialog
       ref={dialogRef}
       aria-labelledby={titleId}
       onClose={handleClose}
+      onCancel={(e) => {
+        // Esc в окне с цветком возвращает к тексту, а не закрывает запись.
+        if (step === "mood") {
+          e.preventDefault();
+          setStep("write");
+        }
+      }}
       onClick={(e) => {
         if (e.target === dialogRef.current) dialogRef.current?.close();
       }}
-      className="entry-dialog fixed m-0 h-auto max-h-[92dvh] w-full max-w-none overflow-hidden border-0 bg-transparent p-0 text-text sm:m-auto sm:max-w-(--layout-modalMax)"
+      className="entry-dialog fixed inset-x-0 top-0 m-0 h-dvh max-h-none w-full max-w-none overflow-hidden border-0 bg-transparent p-0 text-text sm:inset-auto sm:m-auto sm:h-auto sm:max-h-[92dvh] sm:max-w-(--layout-modalMax)"
     >
       <form
         noValidate
+        style={FORM_STYLE}
         onSubmit={(e) => {
           e.preventDefault();
-          // Ничего не менялось: «Готово» просто закрывает окно.
+          // Ничего не менялось: «Done» просто закрывает окно.
           if (!dirty) {
             dialogRef.current?.close();
             return;
           }
-          if (canSave) save();
+          if (!canSave) return;
+          // Первый «Done» открывает цветок с настроением, второй сохраняет.
+          if (step === "write") setStep("mood");
+          else save();
         }}
-        className="flex h-[92dvh] flex-col rounded-t-lg bg-surface-raised shadow-sheet sm:h-auto sm:max-h-[92dvh] sm:min-h-[30rem] sm:rounded-lg sm:shadow-md"
+        className="relative flex h-full flex-col bg-surface-raised sm:h-auto sm:min-h-[32rem] sm:max-h-[92dvh] sm:rounded-lg sm:shadow-md"
       >
-        <div className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-text-muted/30 sm:hidden" aria-hidden="true" />
-
-        {/* Шапка: дата обычным текстом, выбор даты — по иконке; настоящий input прозрачный и лежит поверх */}
-        <header className="flex shrink-0 items-start justify-between gap-2 px-5 pt-4">
-          <div className="min-w-0">
-            <div className="relative flex items-center gap-1">
-              <h2 id={titleId} className="text-lg text-text first-letter:uppercase">
-                {formatLong(date)}
-              </h2>
-              <button type="button" onClick={openDatePicker} aria-label="Сменить дату" className="-my-2 grid min-h-(--layout-tapMin) min-w-(--layout-tapMin) place-items-center rounded-full text-text-muted hover:text-text">
-                <CalendarDays size={18} aria-hidden="true" />
+        <div ref={mainRef} className="flex min-h-0 flex-1 flex-col">
+          {/* Верх: дата маленьким текстом и квадрат с точкой по центру */}
+          <header className="relative shrink-0 px-5 text-center" style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}>
+            <h2 id={titleId} className="sr-only">
+              {formatLong(date)}
+            </h2>
+            <div className="relative inline-block">
+              <button type="button" onClick={openDatePicker} aria-label={`Сменить дату, сейчас ${formatLong(date)}`} className="min-h-(--layout-tapMin) px-3 text-lg text-text-muted">
+                {dateLabel}
               </button>
               <input
                 ref={dateInputRef}
@@ -273,100 +337,139 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
                 className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
               />
             </div>
-            {isPast && <p className="text-sm text-text-muted">прошлый день</p>}
-          </div>
-          <IconButton label="Закрыть" onClick={() => dialogRef.current?.close()}>
-            <IconClose />
-          </IconButton>
-        </header>
-
-        <div className="flex-1 space-y-5 overflow-y-auto px-5 pb-4 pt-3">
-          <MoodPicker value={form.mood} onChange={(mood) => setForm((f) => ({ ...f, mood }))} />
-
-          {/* Фото сверху по центру, над текстом */}
-          {(hasPhotos || picker.busy > 0) && (
-            <div>
-              <PhotoGallery
-                store={photoStore}
-                items={form.photos}
-                busy={picker.busy}
-                disabled={saving}
-                onRemove={(id) => setForm((f) => ({ ...f, photos: f.photos.filter((p) => p.ref.id !== id) }))}
-              />
-              {hasPhotos && <p className="mt-3 text-center text-xs text-text-muted">Фото хранятся только на этом устройстве. Они входят в ZIP-копию.</p>}
+            <div aria-hidden="true" className="mx-auto mt-1 grid size-16 place-items-center rounded-2xl border border-(color:--ink)/35 bg-(--ink)/15">
+              <span className="size-1.5 rounded-full bg-(--ink)" />
             </div>
-          )}
+            <div className="absolute right-2" style={{ top: "max(0.5rem, env(safe-area-inset-top))" }}>
+              <IconButton label="Закрыть" onClick={() => dialogRef.current?.close()}>
+                <IconClose />
+              </IconButton>
+            </div>
+          </header>
 
-          <div>
-            {draftRestored && (
-              <p className="mb-2 flex items-center justify-between gap-2 text-sm text-text-muted">
-                <span>Черновик восстановлен</span>
-                <button type="button" onClick={discardDraft} className="rounded-sm px-1 text-accent underline">
-                  Сбросить
-                </button>
+          <div className="flex-1 space-y-5 overflow-y-auto px-6 pb-4 pt-6">
+            {(hasPhotos || picker.busy > 0) && (
+              <div>
+                <PhotoGallery
+                  store={photoStore}
+                  items={form.photos}
+                  busy={picker.busy}
+                  disabled={saving}
+                  onRemove={(id) => setForm((f) => ({ ...f, photos: f.photos.filter((p) => p.ref.id !== id) }))}
+                />
+                {hasPhotos && <p className="mt-3 text-center text-sm text-text-muted">Фото хранятся только на этом устройстве. Они входят в ZIP-копию.</p>}
+              </div>
+            )}
+
+            <div>
+              {draftRestored && (
+                <p className="mb-2 flex items-center justify-between gap-2 text-base text-text-muted">
+                  <span>Черновик восстановлен</span>
+                  <button type="button" onClick={discardDraft} className="rounded-sm px-1 text-(color:--ink) underline">
+                    Сбросить
+                  </button>
+                </p>
+              )}
+              <label htmlFor={bodyId} className="sr-only">
+                Запись дня
+              </label>
+              <textarea
+                ref={textRef}
+                id={bodyId}
+                rows={3}
+                value={form.body}
+                placeholder={T.placeholder}
+                onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
+                className="block min-h-[40dvh] w-full resize-none appearance-none border-0 bg-transparent p-0 text-2xl leading-9 text-text shadow-none outline-none ring-0 placeholder:text-text-muted/50 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none"
+              />
+            </div>
+
+            {!photoStore.available && <p className="text-base text-text-muted">В этом браузере нельзя сохранять фото. Тексты работают как обычно.</p>}
+
+            {error && (
+              <p role="alert" className="rounded-xl bg-danger/10 p-3 text-base text-danger">
+                {error}
               </p>
             )}
-            <label htmlFor={bodyId} className="sr-only">
-              Запись дня
-            </label>
-            <textarea
-              ref={textRef}
-              id={bodyId}
-              rows={5}
-              value={form.body}
-              placeholder="Что сегодня было?"
-              onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))}
-              className="block min-h-[30dvh] w-full resize-none appearance-none border-0 bg-transparent p-0 font-entry text-entry text-text shadow-none outline-none ring-0 placeholder:text-text-muted focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none"
-            />
+
+            {existing && confirmDelete && (
+              <div role="group" aria-label="Подтверждение удаления" className="rounded-xl bg-surface p-4">
+                <p className="mb-3 text-lg">Удалить запись за {formatShort(date)}? Растение снова станет семенем.</p>
+                <div className="flex gap-2">
+                  <Button variant="danger" onClick={remove}>
+                    Удалить
+                  </Button>
+                  <Button variant="secondary" onClick={() => setConfirmDelete(false)}>
+                    Не удалять
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
 
-          {!photoStore.available && <p className="text-sm text-text-muted">В этом браузере нельзя сохранять фото. Тексты работают как обычно.</p>}
+          {/* Нижняя панель над клавиатурой: две квадратные кнопки слева, Done справа */}
+          <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-2" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
+            <div className="flex items-center gap-3">
+              <button type="button" className={SQUARE_BTN} aria-label="Добавить фото из галереи" onClick={picker.openGallery} disabled={!canAddPhoto}>
+                <ImagePlus size={24} strokeWidth={1.6} aria-hidden="true" />
+              </button>
+              <button type="button" className={SQUARE_BTN} aria-label="Сделать фото" onClick={picker.openCamera} disabled={!canAddPhoto}>
+                <Camera size={24} strokeWidth={1.6} aria-hidden="true" />
+              </button>
+              {hasPhotos && (
+                <span className="text-base tabular-nums text-text-muted" aria-label={`Фото: ${form.photos.length} из ${picker.max}`}>
+                  {form.photos.length}/{picker.max}
+                </span>
+              )}
+              {existing && !confirmDelete && (
+                <button
+                  type="button"
+                  aria-label="Удалить запись"
+                  onClick={() => setConfirmDelete(true)}
+                  className="grid min-h-(--layout-tapMin) min-w-(--layout-tapMin) place-items-center rounded-xl text-text-muted hover:text-text"
+                >
+                  <Trash2 size={22} strokeWidth={1.6} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            <button type="submit" className={DONE_BTN} disabled={saving || (dirty && !canSave)}>
+              {T.done}
+            </button>
+          </div>
+        </div>
 
-          {error && (
-            <p role="alert" className="rounded-lg bg-danger/10 p-3 text-sm text-danger">
-              {error}
-            </p>
-          )}
-
-          {existing && confirmDelete && (
-            <div role="group" aria-label="Подтверждение удаления" className="rounded-lg bg-surface p-4">
-              <p className="mb-3 text-base">Удалить запись за {formatShort(date)}? Растение снова станет семенем.</p>
-              <div className="flex gap-2">
-                <Button variant="danger" onClick={remove}>
-                  Удалить
-                </Button>
-                <Button variant="secondary" onClick={() => setConfirmDelete(false)}>
-                  Не удалять
-                </Button>
+        {/* Цветок и настроение: показываются только перед сохранением */}
+        {step === "mood" && (
+          <div
+            className="absolute inset-0 z-10 flex flex-col justify-end bg-black/50"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setStep("write");
+            }}
+          >
+            <div
+              role="group"
+              aria-labelledby={sheetTitleId}
+              className="rounded-t-3xl bg-surface px-6 pt-3 shadow-sheet sm:rounded-b-lg"
+              style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
+            >
+              <div className="mx-auto h-1 w-10 rounded-full bg-text-muted/30" aria-hidden="true" />
+              <p id={sheetTitleId} className="mx-auto mt-5 max-w-[16rem] text-center text-2xl leading-8 text-(color:--ink)">
+                {T.moodTitle}
+              </p>
+              <div className="grid h-60 place-items-center">
+                <MoodFlower mood={form.mood} className="h-48 w-auto" />
+              </div>
+              <div className="flex flex-col items-center [&_[role=radio]]:size-14 [&_[role=radio]>span]:size-7 [&_[role=radiogroup]]:ml-0">
+                <MoodPicker value={form.mood} onChange={(mood) => setForm((f) => ({ ...f, mood }))} />
+              </div>
+              <div className="mt-6 flex justify-center">
+                <button ref={sheetDoneRef} type="submit" className={DONE_BTN} disabled={saving}>
+                  {T.done}
+                </button>
               </div>
             </div>
-          )}
-        </div>
-
-        {/* Нижняя панель: слева иконки, справа «Готово» */}
-        <div className="flex shrink-0 items-center justify-between gap-2 px-3 pt-2" style={{ paddingBottom: "max(var(--space-3), env(safe-area-inset-bottom))" }}>
-          <div className="flex items-center">
-            <button type="button" className={TOOL_BTN} aria-label="Добавить фото из галереи" onClick={picker.openGallery} disabled={!canAddPhoto}>
-              <ImagePlus size={22} aria-hidden="true" />
-            </button>
-            <button type="button" className={TOOL_BTN} aria-label="Сделать фото" onClick={picker.openCamera} disabled={!canAddPhoto}>
-              <Camera size={22} aria-hidden="true" />
-            </button>
-            {hasPhotos && (
-              <span className="px-1 text-xs tabular-nums text-text-muted" aria-label={`Фото: ${form.photos.length} из ${picker.max}`}>
-                {form.photos.length}/{picker.max}
-              </span>
-            )}
-            {existing && !confirmDelete && (
-              <button type="button" className={TOOL_BTN} aria-label="Удалить запись" onClick={() => setConfirmDelete(true)}>
-                <Trash2 size={22} aria-hidden="true" />
-              </button>
-            )}
           </div>
-          <Button type="submit" variant="primary" className="px-6" disabled={saving || (dirty && !canSave)}>
-            Готово
-          </Button>
-        </div>
+        )}
 
         {picker.inputs}
         <p role="status" className="sr-only">
