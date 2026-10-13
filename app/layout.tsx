@@ -1,8 +1,10 @@
+import { Caveat } from "next/font/google";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { APP_NAME, APP_TAGLINE } from "../lib/brand.ts";
 import { PwaRegister } from "../components/PwaRegister.tsx";
 import "./globals.css";
+const hand = Caveat({ subsets: ["latin", "cyrillic"], variable: "--font-hand" });
 
 export const metadata: Metadata = {
   title: APP_NAME,
@@ -40,6 +42,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {children}
         <PwaRegister />
       </body>
-    </html>
+    </html lang="ru" className={hand.variable}>
   );
 }
