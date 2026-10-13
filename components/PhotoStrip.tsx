@@ -1,70 +1,39 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { X } from "lucide-react";
 import { newPhotoItem, type PhotoItem } from "../lib/entryPhotos.ts";
 import { compressImage } from "../lib/image.ts";
 import type { PhotoStore } from "../lib/photos.ts";
 import { GardenError, LIMITS } from "../lib/types.ts";
-import { Button } from "./ui.tsx";
 
-export interface PhotoStripProps {
-  store: PhotoStore;
+type Update = (prev: readonly PhotoItem[]) => readonly PhotoItem[];
+
+/* ───────────── Выбор файлов: логика та же, что была в PhotoStrip, но кнопки живут в нижней панели ───────────── */
+
+export interface PhotoPickerOptions {
   items: readonly PhotoItem[];
   /** Функция-обновление, а не готовый список: сжатие асинхронное, и список за это время мог измениться. */
-  onChange: (update: (prev: readonly PhotoItem[]) => readonly PhotoItem[]) => void;
+  onChange: (update: Update) => void;
   onError: (message: string | null) => void;
-  disabled?: boolean;
 }
 
-function PhotoThumb({ store, item, alt }: { store: PhotoStore; item: PhotoItem; alt: string }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [missing, setMissing] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    let made: string | null = null;
-    setMissing(false);
-    setUrl(null);
-    if (item.kind === "new") {
-      made = URL.createObjectURL(item.blob);
-      setUrl(made);
-    } else {
-      store
-        .get(item.ref.id)
-        .then((rec) => {
-          if (cancelled) return;
-          if (!rec) {
-            setMissing(true);
-            return;
-          }
-          made = URL.createObjectURL(rec.blob);
-          setUrl(made);
-        })
-        .catch(() => {
-          if (!cancelled) setMissing(true);
-        });
-    }
-    return () => {
-      cancelled = true;
-      if (made) URL.revokeObjectURL(made);
-    };
-  }, [store, item]);
-
-  return (
-    <div className="grid size-20 place-items-center overflow-hidden rounded-sm border border-border bg-surface">
-      {url ? (
-        <img src={url} alt={alt} draggable={false} className="size-full object-cover" />
-      ) : (
-        <span className="px-1 text-center text-xs text-text-muted">{missing ? "Нет файла" : ""}</span>
-      )}
-    </div>
-  );
+export interface PhotoPicker {
+  /** Сколько фото сейчас сжимается. */
+  busy: number;
+  /** Сколько ещё можно добавить. */
+  room: number;
+  max: number;
+  openGallery: () => void;
+  openCamera: () => void;
+  /** Скрытые <input type="file">: вставьте один раз в разметку. */
+  inputs: ReactNode;
 }
 
-export function PhotoStrip({ store, items, onChange, onError, disabled }: PhotoStripProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+export function usePhotoPicker({ items, onChange, onError }: PhotoPickerOptions): PhotoPicker {
+  const galleryRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const alive = useRef(true);
-  const labelId = useId();
   const [busy, setBusy] = useState(0);
   const max = LIMITS.maxPhotosPerEntry;
   const room = max - items.length - busy;
@@ -100,53 +69,108 @@ export function PhotoStrip({ store, items, onChange, onError, disabled }: PhotoS
     if (failure && alive.current) onError(failure);
   }
 
+  const inputs = (
+    <>
+      <input ref={galleryRef} type="file" accept="image/*" multiple className="hidden" onChange={onPick} tabIndex={-1} aria-hidden="true" />
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onPick} tabIndex={-1} aria-hidden="true" />
+    </>
+  );
+
+  return {
+    busy,
+    room,
+    max,
+    openGallery: () => galleryRef.current?.click(),
+    openCamera: () => cameraRef.current?.click(),
+    inputs,
+  };
+}
+
+/* ───────────── Показ фото: по центру, мягкие углы, без рамок ───────────── */
+
+function PhotoThumb({ store, item, alt, className }: { store: PhotoStore; item: PhotoItem; alt: string; className: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [missing, setMissing] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    let made: string | null = null;
+    setMissing(false);
+    setUrl(null);
+    if (item.kind === "new") {
+      made = URL.createObjectURL(item.blob);
+      setUrl(made);
+    } else {
+      store
+        .get(item.ref.id)
+        .then((rec) => {
+          if (cancelled) return;
+          if (!rec) {
+            setMissing(true);
+            return;
+          }
+          made = URL.createObjectURL(rec.blob);
+          setUrl(made);
+        })
+        .catch(() => {
+          if (!cancelled) setMissing(true);
+        });
+    }
+    return () => {
+      cancelled = true;
+      if (made) URL.revokeObjectURL(made);
+    };
+  }, [store, item]);
+
   return (
-    <div>
-      <div className="mb-1 flex items-baseline justify-between gap-2">
-        <span id={labelId} className="text-sm text-text-muted">
-          Фото
-        </span>
-        <span className="text-sm tabular-nums text-text-muted">
-          {items.length} из {max}
-        </span>
-      </div>
-
-      {(items.length > 0 || busy > 0) && (
-        <ul aria-labelledby={labelId} className="mb-2 flex flex-wrap gap-x-2">
-          {items.map((item, i) => (
-            <li key={item.ref.id} className="w-20">
-              <PhotoThumb store={store} item={item} alt={`Фото ${i + 1} из ${items.length}`} />
-              <button
-                type="button"
-                disabled={disabled}
-                aria-label={`Убрать фото ${i + 1}`}
-                onClick={() => onChange((prev) => prev.filter((p) => p.ref.id !== item.ref.id))}
-                className="min-h-(--layout-tapMin) w-full rounded-sm text-sm text-danger underline"
-              >
-                Убрать
-              </button>
-            </li>
-          ))}
-          {Array.from({ length: busy }, (_, i) => (
-            <li key={`busy-${i}`} aria-hidden="true" className="w-20">
-              <div className="grid size-20 place-items-center rounded-sm border border-dashed border-border text-xs text-text-muted">…</div>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <input ref={inputRef} type="file" accept="image/*" multiple className="hidden" onChange={onPick} tabIndex={-1} aria-hidden="true" />
-      <Button variant="secondary" onClick={() => inputRef.current?.click()} disabled={disabled || !store.available || room <= 0}>
-        Добавить фото
-      </Button>
-      <p role="status" className="sr-only">
-        {busy > 0 ? "Обрабатываю фото…" : ""}
-      </p>
-      {store.available ? (
-        <p className="mt-1 text-sm text-text-muted">Фото хранятся только на этом устройстве. Они входят в ZIP-копию: сохраните её в разделе «Копия и настройки».</p>
+    <div className={`grid place-items-center overflow-hidden rounded-lg bg-surface ${className}`}>
+      {url ? (
+        <img src={url} alt={alt} draggable={false} className="size-full object-cover" />
       ) : (
-        <p className="mt-1 text-sm text-text-muted">В этом браузере нельзя сохранять фото. Тексты работают как обычно.</p>
+        <span className="px-1 text-center text-xs text-text-muted">{missing ? "Нет файла" : ""}</span>
       )}
     </div>
+  );
+}
+
+export interface PhotoGalleryProps {
+  store: PhotoStore;
+  items: readonly PhotoItem[];
+  /** Сколько фото ещё обрабатывается: для них рисуем заглушки. */
+  busy: number;
+  disabled?: boolean;
+  onRemove: (id: string) => void;
+}
+
+export function PhotoGallery({ store, items, busy, disabled, onRemove }: PhotoGalleryProps) {
+  const total = items.length + busy;
+  if (total === 0) return null;
+  const single = total === 1;
+  const size = single ? "aspect-[4/5] w-56 max-w-full" : "size-32";
+
+  return (
+    <ul className="flex flex-wrap justify-center gap-3">
+      {items.map((item, i) => (
+        <li key={item.ref.id} className="relative">
+          <PhotoThumb store={store} item={item} alt={`Фото ${i + 1} из ${items.length}`} className={size} />
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={`Убрать фото ${i + 1}`}
+            onClick={() => onRemove(item.ref.id)}
+            className="absolute right-1 top-1 grid size-10 place-items-center rounded-full text-white disabled:opacity-40"
+          >
+            <span className="grid size-7 place-items-center rounded-full bg-black/55">
+              <X size={16} aria-hidden="true" />
+            </span>
+          </button>
+        </li>
+      ))}
+      {Array.from({ length: busy }, (_, i) => (
+        <li key={`busy-${i}`} aria-hidden="true">
+          <div className={`grid place-items-center rounded-lg bg-surface text-text-muted ${size}`}>…</div>
+        </li>
+      ))}
+    </ul>
   );
 }
