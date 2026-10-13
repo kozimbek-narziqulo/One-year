@@ -402,8 +402,10 @@ export const PLANTS: readonly PlantDef[] = [
   }),
   def("подснежник", 21, (r) => {
     const s = cubic([31, 59], [31, 42], [33, 26], [42, 18]);
-    const ps = [petal(r, 42, 19, 205, 0, 13, 3.8), petal(r, 42, 19, 155, 0, 13, 3.8), petal(r, 42, 19, 180, 0, 16, 3.8)];
-    return { strokes: [s.d, petal(r, 28, 58, -34, 0, 26, 2.4), petal(r, 34, 58, 30, 0, 22, 2.4), ...ps, "M41 20 C40 23,40 25,41 27"], fills: [ps[2]] };
+    const p1 = petal(r, 42, 19, 205, 0, 13, 3.8);
+    const p2 = petal(r, 42, 19, 155, 0, 13, 3.8);
+    const p3 = petal(r, 42, 19, 180, 0, 16, 3.8);
+    return { strokes: [s.d, petal(r, 28, 58, -34, 0, 26, 2.4), petal(r, 34, 58, 30, 0, 22, 2.4), p1, p2, p3, "M41 20 C40 23,40 25,41 27"], fills: [p3] };
   }),
   def("лаванда", 22, (r) => {
     const s = stem(32, 59, 32, 14, 1.5);
@@ -423,11 +425,13 @@ export const PLANTS: readonly PlantDef[] = [
     };
   }),
   def("незабудки", 24, (r) => {
-    const stems = [stem(22, 59, 21, 36, 2), stem(33, 59, 34, 22, -2), stem(44, 59, 45, 38, 2)];
+    const s0 = stem(22, 59, 21, 36, 2);
+    const s1 = stem(33, 59, 34, 22, -2);
+    const s2 = stem(44, 59, 45, 38, 2);
     const heads: Pt[] = [[21, 32], [34, 18], [45, 34]];
-    const out: string[] = stems.map((s) => s.d);
+    const out: string[] = [s0.d, s1.d, s2.d];
     heads.forEach((h) => out.push(...head(r, h[0], h[1], 5, 1.2, 7, 3), dots([h])));
-    out.push(leaf(r, stems[1].at(0.2), -60, 9, 3), leaf(r, stems[0].at(0.3), 60, 8, 2.8));
+    out.push(leaf(r, s1.at(0.2), -60, 9, 3), leaf(r, s0.at(0.3), 60, 8, 2.8));
     return { strokes: out };
   }),
   def("бутон", 25, (r) => {
@@ -493,8 +497,11 @@ export const PLANTS: readonly PlantDef[] = [
   }),
   def("клевер на счастье", 38, (r) => {
     const s = stem(32, 59, 32, 40, 4);
-    const ls = [blob(r, 24, 20, 8, 7.5), blob(r, 40, 20, 8, 7.5), blob(r, 24, 34, 8, 7.5), blob(r, 40, 34, 8, 7.5)];
-    return { strokes: [s.d, ...ls, "M32 40 L26 22 M32 40 L38 22 M32 40 L26 34 M32 40 L38 34"], fills: [ls[0], ls[3]] };
+    const l1 = blob(r, 24, 20, 8, 7.5);
+    const l2 = blob(r, 40, 20, 8, 7.5);
+    const l3 = blob(r, 24, 34, 8, 7.5);
+    const l4 = blob(r, 40, 34, 8, 7.5);
+    return { strokes: [s.d, l1, l2, l3, l4, "M32 40 L26 22 M32 40 L38 22 M32 40 L26 34 M32 40 L38 34"], fills: [l1, l4] };
   }),
   def("папоротник", 39, (r) => {
     const s = stem(30, 59, 36, 8, -5);
@@ -683,6 +690,7 @@ export interface PlantSketchProps {
 /** Растение из библиотеки. Цвет берётся из currentColor: его задаёт родитель (по настроению). */
 export const PlantSketch = memo(function PlantSketch({ shapeId, className = "", strokeWidth = 2.2, wobble, double }: PlantSketchProps) {
   const plant = PLANTS[((shapeId % PLANT_COUNT) + PLANT_COUNT) % PLANT_COUNT];
+  if (!plant) return null;
   const lines = plant.strokes.map((d, i) => <path key={i} d={d} />);
   return (
     <svg
