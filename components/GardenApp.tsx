@@ -1,18 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getPhotoStore, getRepo, useGardenState, useToday } from "../hooks/useGarden.ts";
 import { APP_NAME } from "../lib/brand.ts";
 import { compareKeys, daysElapsed, daysInYear, formatShort, yearOf, type DateKey } from "../lib/date.ts";
-import { plantSeedOf, shiftKey } from "../lib/dayKeys.ts";
+import { shiftKey } from "../lib/dayKeys.ts";
 import { referencedPhotoIds } from "../lib/photos.ts";
 import { shouldNudgeBackup } from "../lib/repo.ts";
 import { LIMITS, type Entry, type PlantInfo } from "../lib/types.ts";
 import { BackupPanel } from "./BackupPanel.tsx";
 import { EntryModal } from "./EntryModal.tsx";
 import { GardenDots } from "./GardenDots.tsx";
-import { IconFlower, IconGardenGroup, PlantIcon } from "./GardenIcons.tsx";
+import { IconFlower, IconGardenGroup } from "./GardenIcons.tsx";
 import { MemoryFeed } from "./MemoryFeed.tsx";
+import { MOOD_TONE } from "./MoodFlower.tsx";
+import { PlantSketch, resolveShapeId } from "./SketchUI.tsx";
 import { Toast, type ToastData } from "./Toast.tsx";
 import { Button, IconButton, IconChevronLeft, IconChevronRight, IconSettings } from "./ui.tsx";
 
@@ -71,39 +73,77 @@ function PlantButton({ hasEntry, onClick }: { hasEntry: boolean; onClick: () => 
   );
 }
 
-/** Полоска дней сверху: три прошедших дня точками и сегодняшний день в рамке по центру. */
+/** Сколько прошедших дней можно листать в полоске. */
+const STRIP_PAST_DAYS = 90;
+const NO_MOOD_TONE = "text-[#9a85ff]";
+
+/** Растение из библиотеки в цвете настроения: так же, как в саду. */
+function StripPlant({ plant, dateKey, className }: { plant: PlantInfo; dateKey: DateKey; className: string }) {
+  return (
+    <PlantSketch
+      shapeId={resolveShapeId(plant.shapeId, dateKey)}
+      strokeWidth={3}
+      className={`${className} ${plant.mood != null ? MOOD_TONE[plant.mood] : NO_MOOD_TONE}`}
+    />
+  );
+}
+
+/**
+ * Полоска дней сверху: прошедшие дни слева, сегодняшний в рамке по центру.
+ * Листается пальцем по горизонтали (touch-pan-x, нативная инерция, мягкая привязка к дням).
+ */
 function DayStrip({ today, plants, onOpen }: { today: DateKey; plants: ReadonlyMap<string, PlantInfo>; onOpen: (key: DateKey) => void }) {
-  const past = [-3, -2, -1].map((n) => shiftKey(today, n));
-  const todayMarked = plants.has(today);
+  const scrollerRef = useRef<HTMLUListElement>(null);
+  const todayRef = useRef<HTMLLIElement>(null);
+  const past = useMemo(() => Array.from({ length: STRIP_PAST_DAYS }, (_, i) => shiftKey(today, i - STRIP_PAST_DAYS)), [today]);
+  const todayPlant = plants.get(today);
+
+  // При появлении (и при смене суток) ставим «сегодня» по центру. Три пустых хвоста справа держат его там в крайнем положении.
+  useLayoutEffect(() => {
+    const box = scrollerRef.current;
+    const item = todayRef.current;
+    if (!box || !item) return;
+    box.scrollLeft = item.offsetLeft - (box.clientWidth - item.offsetWidth) / 2;
+  }, [today]);
+
   return (
     <div className="pt-4">
       <h1 className="mb-2 text-center font-mono text-base">Сегодня</h1>
-      <ul className="grid grid-cols-7 items-center">
-        {past.map((key) => (
-          <li key={key} className="grid place-items-center">
-            <button
-              type="button"
-              onClick={() => onOpen(key)}
-              aria-label={`${formatShort(key)}${plants.has(key) ? ", есть запись" : ", записи нет"}`}
-              className="grid size-11 place-items-center rounded-full"
-            >
-              {plants.has(key) ? <PlantIcon seed={plantSeedOf(key)} className="size-6 text-[#9a85ff]" /> : <span className="size-1 rounded-full bg-current" />}
-            </button>
-          </li>
-        ))}
-        <li className="grid place-items-center">
+      <ul
+        ref={scrollerRef}
+        aria-label="Последние дни"
+        // Жест начинается в полоске: листаем её, а не переключаем экраны «Сегодня» / «Сад».
+        onPointerDown={(e) => e.stopPropagation()}
+        className="relative flex touch-pan-x snap-x snap-proximity items-center overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        {past.map((key) => {
+          const plant = plants.get(key);
+          return (
+            <li key={key} className="grid w-[calc(100%/7)] shrink-0 snap-center place-items-center">
+              <button
+                type="button"
+                onClick={() => onOpen(key)}
+                aria-label={`${formatShort(key)}${plant ? ", есть запись" : ", записи нет"}`}
+                className="grid size-11 place-items-center rounded-full"
+              >
+                {plant ? <StripPlant plant={plant} dateKey={key} className="size-6" /> : <span className="size-1 rounded-full bg-current" />}
+              </button>
+            </li>
+          );
+        })}
+        <li ref={todayRef} className="grid w-[calc(100%/7)] shrink-0 snap-center place-items-center">
           <button
             type="button"
             onClick={() => onOpen(today)}
-            aria-label={`Сегодня, ${formatShort(today)}${todayMarked ? ", есть запись" : ", записи нет"}`}
+            aria-label={`Сегодня, ${formatShort(today)}${todayPlant ? ", есть запись" : ", записи нет"}`}
             aria-current="date"
             className="grid aspect-square w-[88%] place-items-center rounded-[1.4rem] border border-[#5b3dff]/40 bg-[#5b3dff]/15"
           >
-            {todayMarked ? <PlantIcon seed={plantSeedOf(today)} className="size-7 text-[#9a85ff]" /> : <span className="size-1 rounded-full bg-current" />}
+            {todayPlant ? <StripPlant plant={todayPlant} dateKey={today} className="size-7" /> : <span className="size-1 rounded-full bg-current" />}
           </button>
         </li>
         {[0, 1, 2].map((i) => (
-          <li key={i} aria-hidden="true" />
+          <li key={i} aria-hidden="true" className="w-[calc(100%/7)] shrink-0" />
         ))}
       </ul>
     </div>
