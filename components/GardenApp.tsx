@@ -7,7 +7,7 @@ import { compareKeys, daysElapsed, daysInYear, formatShort, yearOf, type DateKey
 import { plantSeedOf, shiftKey } from "../lib/dayKeys.ts";
 import { referencedPhotoIds } from "../lib/photos.ts";
 import { shouldNudgeBackup } from "../lib/repo.ts";
-import { LIMITS, type Entry } from "../lib/types.ts";
+import { LIMITS, type Entry, type PlantInfo } from "../lib/types.ts";
 import { BackupPanel } from "./BackupPanel.tsx";
 import { EntryModal } from "./EntryModal.tsx";
 import { GardenDots } from "./GardenDots.tsx";
@@ -72,9 +72,9 @@ function PlantButton({ hasEntry, onClick }: { hasEntry: boolean; onClick: () => 
 }
 
 /** Полоска дней сверху: три прошедших дня точками и сегодняшний день в рамке по центру. */
-function DayStrip({ today, marked, onOpen }: { today: DateKey; marked: ReadonlySet<string>; onOpen: (key: DateKey) => void }) {
+function DayStrip({ today, plants, onOpen }: { today: DateKey; plants: ReadonlyMap<string, PlantInfo>; onOpen: (key: DateKey) => void }) {
   const past = [-3, -2, -1].map((n) => shiftKey(today, n));
-  const todayMarked = marked.has(today);
+  const todayMarked = plants.has(today);
   return (
     <div className="pt-4">
       <h1 className="mb-2 text-center font-mono text-base">Сегодня</h1>
@@ -84,10 +84,10 @@ function DayStrip({ today, marked, onOpen }: { today: DateKey; marked: ReadonlyS
             <button
               type="button"
               onClick={() => onOpen(key)}
-              aria-label={`${formatShort(key)}${marked.has(key) ? ", есть запись" : ", записи нет"}`}
+              aria-label={`${formatShort(key)}${plants.has(key) ? ", есть запись" : ", записи нет"}`}
               className="grid size-11 place-items-center rounded-full"
             >
-              {marked.has(key) ? <PlantIcon seed={plantSeedOf(key)} className="size-6 text-[#9a85ff]" /> : <span className="size-1 rounded-full bg-current" />}
+              {plants.has(key) ? <PlantIcon seed={plantSeedOf(key)} className="size-6 text-[#9a85ff]" /> : <span className="size-1 rounded-full bg-current" />}
             </button>
           </li>
         ))}
@@ -186,8 +186,16 @@ export function GardenApp() {
     [today, showToast],
   );
 
-  // Даты, на которые есть запись (для точек и цветов).
-  const marked = useMemo<ReadonlySet<string>>(() => new Set(state ? Object.keys(state.entries) : []), [state]);
+  // Растения сада по датам: рисунок (shapeId) и настроение (цвет). Наличие даты в карте = есть запись.
+  const plants = useMemo<ReadonlyMap<string, PlantInfo>>(() => {
+    const map = new Map<string, PlantInfo>();
+    if (state) {
+      for (const e of Object.values(state.entries)) {
+        map.set(e.date, { mood: e.mood, ...(e.shapeId !== undefined ? { shapeId: e.shapeId } : {}) });
+      }
+    }
+    return map;
+  }, [state]);
 
   // Самый ранний год, до которого можно дойти: не раньше самой старой записи (например, из импортированной копии).
   const minYear = useMemo(() => {
@@ -208,7 +216,7 @@ export function GardenApp() {
   const elapsed = daysElapsed(year, today);
   const total = daysInYear(year);
   const nudge = shouldNudgeBackup(state, Date.now());
-  const todayHasEntry = marked.has(today);
+  const todayHasEntry = plants.has(today);
 
   function onSaved(entry: Entry, wasNew: boolean) {
     setModalDate(null);
@@ -320,7 +328,7 @@ export function GardenApp() {
             >
               {/* Экран «Сегодня» */}
               <section className="flex h-full w-1/2 flex-col px-(--layout-gutter) pb-32" style={pageStyle(view === "today")}>
-                <DayStrip today={today} marked={marked} onOpen={openDate} />
+                <DayStrip today={today} plants={plants} onOpen={openDate} />
                 <div className="grid flex-1 place-items-center">
                   <PlantButton hasEntry={todayHasEntry} onClick={() => openDate(today)} />
                 </div>
@@ -342,7 +350,7 @@ export function GardenApp() {
 
                 {Object.keys(state.entries).length === 0 && <p className="mb-4 text-center font-mono text-sm">Пока здесь одни семена. Начнём с сегодняшнего дня?</p>}
 
-                <GardenDots year={year} today={today} marked={marked} plantedKey={planted} onOpen={openDate} />
+                <GardenDots year={year} today={today} plants={plants} plantedKey={planted} onOpen={openDate} />
 
                 <p className="mt-6 text-center font-mono text-xs tabular-nums opacity-70">
                   Записей: {entryCountThisYear} из {total} · прошло {elapsed} дн.

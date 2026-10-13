@@ -19,6 +19,7 @@ import {
   DEFAULT_META,
   DEFAULT_SETTINGS,
   GardenError,
+  isShapeId,
   LIMITS,
   photosOf,
   sanitizePhotoRefs,
@@ -61,6 +62,8 @@ export interface SaveInput {
   mood: Mood | null;
   /** Не передано: фото записи остаются как были. Пустой список: фото убраны. */
   photos?: readonly PhotoRef[];
+  /** Не передано: остаётся прежний рисунок записи (у новой записи его просто нет). */
+  shapeId?: number;
 }
 
 export const isMood = (v: unknown): v is Mood => v === 1 || v === 2 || v === 3 || v === 4 || v === 5;
@@ -78,7 +81,12 @@ export function sanitizeEntry(raw: unknown, fallbackTime: number): Entry | null 
   const updatedAt = num(r.updatedAt, createdAt);
   const photos = sanitizePhotoRefs(r.photos);
   const entry: Entry = { date: r.date, body: r.body, mood, createdAt, updatedAt };
-  return photos.length > 0 ? { ...entry, photos } : entry;
+  // Без этого shapeId терялся бы при каждой загрузке, восстановлении и импорте: здесь пересобирается весь объект.
+  return {
+    ...entry,
+    ...(photos.length > 0 ? { photos } : {}),
+    ...(isShapeId(r.shapeId) ? { shapeId: r.shapeId } : {}),
+  };
 }
 
 function sanitizeSettings(raw: unknown): Settings {
@@ -251,6 +259,11 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
       if (body.trim() === "" && input.mood === null && photos.length === 0) {
         throw new GardenError("empty", "Добавьте текст, фото или выберите настроение.");
       }
+      if (input.shapeId !== undefined && !isShapeId(input.shapeId)) {
+        throw new GardenError("invalid", "Некорректный рисунок растения.");
+      }
+      // Новый shapeId побеждает, иначе остаётся старый: правка записи не меняет её растение.
+      const shapeId = input.shapeId ?? prev?.shapeId;
       const t = now().getTime();
       const entry: Entry = {
         date: input.date,
@@ -259,6 +272,7 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
         createdAt: prev?.createdAt ?? t,
         updatedAt: t,
         ...(photos.length > 0 ? { photos } : {}),
+        ...(shapeId !== undefined ? { shapeId } : {}),
       };
       commitEntries({ ...state.entries, [input.date]: entry }, 1);
       try {

@@ -18,12 +18,6 @@ export interface PhotoRef {
 }
 
 export interface Entry {
-  export interface Entry {
-  id: string;
-  date: string;
-  // ... твои остальные поля
-  shapeId?: number; // <--- Добавь эту строку
-}
   date: DateKey; // первичный ключ: одна запись в день
   body: string;
   mood: Mood | null;
@@ -31,7 +25,22 @@ export interface Entry {
   updatedAt: number;
   /** Нет поля = нет фото: записи без фото хранятся ровно так же, как до появления фото. */
   photos?: PhotoRef[];
+  /** Номер рисунка растения для этой записи. Нет поля = рисунок ещё не назначен (старые записи). Однажды назначенный не меняется. */
+  shapeId?: number;
 }
+
+/** Что саду нужно знать о растении дня: рисунок и настроение (цвет). */
+export interface PlantInfo {
+  /** Нет значения = рисунок не назначен: выбирайте запасной. */
+  shapeId?: number;
+  mood: Mood | null;
+}
+
+/** Верхняя граница shapeId при чтении из хранилища и импорта: отсекает мусор, а не задаёт число рисунков. */
+export const MAX_SHAPE_ID = 10_000;
+
+/** Допустимый shapeId: целое число от 0 до MAX_SHAPE_ID. */
+export const isShapeId = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= MAX_SHAPE_ID;
 
 export type ThemeSetting = "system" | "light" | "dark";
 export type MoodPalette = "default" | "cvd";

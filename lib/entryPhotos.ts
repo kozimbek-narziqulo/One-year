@@ -61,6 +61,8 @@ export async function saveEntryWithPhotos(repo: Repo, store: PhotoStore, input: 
       body: input.body,
       mood: input.mood,
       photos: input.items.map((i) => i.ref),
+      // Не передан: repo сохранит прежний shapeId записи.
+      ...(input.shapeId !== undefined ? { shapeId: input.shapeId } : {}),
     });
     const keep = new Set(photosOf(entry).map((p) => p.id));
     const dropped = photosOf(prev)
