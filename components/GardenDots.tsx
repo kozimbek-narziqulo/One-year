@@ -3,22 +3,31 @@
 import { memo, useMemo } from "react";
 import { compareKeys, formatShort, type DateKey } from "../lib/date.ts";
 import { keysOfYear, plantSeedOf } from "../lib/dayKeys.ts";
-import { PlantIcon } from "./GardenIcons.tsx";
+import type { Mood } from "../lib/types.ts";
+import { MOOD_TONE } from "./MoodFlower.tsx";
+import { PlantSketch, resolveShapeId } from "./SketchUI.tsx";
 
 const COLUMNS = 14;
+
+/** Что нужно саду знать о записи, чтобы нарисовать её растение. */
+export interface GardenPlant {
+  /** Сохранённая форма. У старых записей её нет: тогда форма берётся по дате и больше не меняется. */
+  shapeId?: number | null;
+  mood: Mood | null;
+}
 
 type Props = {
   year: number;
   today: DateKey;
-  /** Даты, на которые есть запись. */
-  marked: ReadonlySet<string>;
+  /** Записи по датам. Передавайте через useMemo, иначе сад будет перерисовываться целиком. */
+  plants: ReadonlyMap<string, GardenPlant>;
   /** Дата, которую только что сохранили: её растение коротко «оживает». */
   plantedKey: DateKey | null;
   onOpen: (key: DateKey) => void;
 };
 
-/** Полотно года: по одной маленькой точке на каждый день. Если есть запись, на месте точки вырастает растение. */
-export const GardenDots = memo(function GardenDots({ year, today, marked, plantedKey, onOpen }: Props) {
+/** Полотно года: по одной маленькой точке на каждый день. Если есть запись, на месте точки вырастает её растение. */
+export const GardenDots = memo(function GardenDots({ year, today, plants, plantedKey, onOpen }: Props) {
   const keys = useMemo(() => keysOfYear(year), [year]);
 
   return (
@@ -29,7 +38,8 @@ export const GardenDots = memo(function GardenDots({ year, today, marked, plante
     >
       {keys.map((key) => {
         const seed = plantSeedOf(key);
-        const hasEntry = marked.has(key);
+        const plant = plants.get(key);
+        const hasEntry = plant !== undefined;
         const isFuture = compareKeys(key, today) > 0;
         const isToday = key === today;
         // Небольшой детерминированный сдвиг (до 3 px), чтобы точки лежали «от руки», а не по линейке.
@@ -47,7 +57,11 @@ export const GardenDots = memo(function GardenDots({ year, today, marked, plante
             >
               <span className="grid place-items-center" style={{ transform: `translate(${dx}px, ${dy}px)` }}>
                 {hasEntry ? (
-                  <PlantIcon seed={seed} className={`size-6 text-[#9a85ff] ${plantedKey === key ? "animate-pulse" : ""}`} />
+                  <PlantSketch
+                    shapeId={resolveShapeId(plant.shapeId, key)}
+                    strokeWidth={3}
+                    className={`size-6 ${plant.mood ? MOOD_TONE[plant.mood] : "text-[#9a85ff]"} ${plantedKey === key ? "animate-pulse" : ""}`}
+                  />
                 ) : (
                   <span
                     className={

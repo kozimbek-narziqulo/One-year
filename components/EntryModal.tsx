@@ -9,7 +9,7 @@ import type { PhotoStore } from "../lib/photos.ts";
 import { MoodPicker } from "./MoodPicker.tsx";
 import { MoodFlower } from "./MoodFlower.tsx";
 import { PhotoGallery, usePhotoPicker } from "./PhotoStrip.tsx";
-import { SketchCloseButton, SketchDefs, SketchDoneButton, SketchIconButton, SketchSquare } from "./SketchUI.tsx";
+import { SketchCloseButton, SketchDefs, SketchDoneButton, SketchIconButton, SketchSquare, randomShapeId, resolveShapeId } from "./SketchUI.tsx";
 import { Button } from "./ui.tsx";
 
 /** Тексты окна в одном месте. */
@@ -87,6 +87,8 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   const [date, setDate] = useState<DateKey>(initialDate);
   const [form, setForm] = useState<Form>(EMPTY);
   const [existing, setExisting] = useState<Entry | null>(null);
+  /** Форма растения этого дня. Для новой записи выпадает случайно при открытии даты и уходит в хранилище вместе с записью. */
+  const [shapeId, setShapeId] = useState(0);
   const [draftRestored, setDraftRestored] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -114,6 +116,9 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
       const draft = repo.getDraft(d);
       const base = baseOf(entry);
       setExisting(entry);
+      // Есть запись: форма уже закреплена за ней (у старых записей без shapeId она стабильно выводится из даты).
+      // Нет записи: тянем жребий один раз, и именно это растение увидим в шторке и сохраним.
+      setShapeId(entry ? resolveShapeId(entry.shapeId, d) : randomShapeId());
       setError(null);
       setConfirmDelete(false);
       if (draft && !same({ body: draft.body, mood: draft.mood, photos: base.photos }, base)) {
@@ -249,7 +254,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     setSaving(true);
     try {
       const wasNew = existing === null;
-      const entry = await saveEntryWithPhotos(repo, photoStore, { date, body: form.body, mood: form.mood, items: form.photos });
+      const entry = await saveEntryWithPhotos(repo, photoStore, { date, body: form.body, mood: form.mood, shapeId, items: form.photos });
       closedBySave.current = true;
       onSaved(entry, wasNew);
     } catch (e) {
@@ -451,7 +456,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
                 {T.moodTitle}
               </p>
               <div className="grid h-60 place-items-center">
-                <MoodFlower mood={form.mood} className="h-48 w-auto" />
+                <MoodFlower mood={form.mood} shapeId={shapeId} className="h-48 w-auto" />
               </div>
               <div className="flex flex-col items-center [&_[role=radio]]:size-14 [&_[role=radio]>span]:size-7 [&_[role=radiogroup]]:ml-0">
                 <MoodPicker value={form.mood} onChange={(mood) => setForm((f) => ({ ...f, mood }))} />
