@@ -34,6 +34,11 @@ if(s.plantPalette==="autumn"||s.plantPalette==="ink")r.setAttribute("data-plant-
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
+    <html lang="ru" className={hand.variable}>
+      {/* тут идет твой body, PwaRegister и остальной код */}
+    </html>
+  );
+}
     <html lang="ru" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
@@ -42,6 +47,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {children}
         <PwaRegister />
       </body>
-    <html lang="ru" className={hand.variable}>
+    </html>
   );
 }
