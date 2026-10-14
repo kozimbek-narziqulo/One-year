@@ -9,7 +9,6 @@ import { referencedPhotoIds } from "../lib/photos.ts";
 import { shouldNudgeBackup } from "../lib/repo.ts";
 import { LIMITS, type Entry, type PlantInfo } from "../lib/types.ts";
 import { BackupPanel } from "./BackupPanel.tsx";
-import { CustomStatusBar } from "./CustomStatusBar.tsx";
 import { EntryModal } from "./EntryModal.tsx";
 import { GardenDots } from "./GardenDots.tsx";
 import { IconFlower, IconGardenGroup } from "./GardenIcons.tsx";
@@ -19,9 +18,16 @@ import { PlantSketch, resolveShapeId } from "./SketchUI.tsx";
 import { Toast, type ToastData } from "./Toast.tsx";
 import { Button, IconButton, IconSettings } from "./ui.tsx";
 
-// Свайп: минимум 50 px по горизонтали и заметно больше, чем по вертикали.
-const SWIPE_MIN_PX = 50;
-const SWIPE_RATIO = 1.5;
+// Свайп между экранами: жест «захватывается» после 10 px по горизонтали, если он заметно горизонтальнее вертикали.
+const SWIPE_LOCK_PX = 10;
+const SWIPE_LOCK_RATIO = 1.5;
+// Экран переключается, если страницу утянули дальше четверти ширины или смахнули быстро.
+const SWIPE_COMMIT_FRACTION = 0.25;
+const SWIPE_COMMIT_SPEED = 0.5; // px/мс
+const SWIPE_COMMIT_MIN_PX = 30;
+// За краем (с «Сегодня» вправо, с «Сада» влево) страница тянется туго, как в iOS.
+const SWIPE_EDGE_RESISTANCE = 0.25;
+const APP_BG = "#02001a";
 
 type View = "today" | "garden" | "feed";
 
@@ -285,7 +291,11 @@ export function GardenApp() {
   // Выбранный в полоске день. null значит «сегодня»: так выбор сам переезжает на новый день после полуночи.
   const [selectedDate, setSelectedDate] = useState<DateKey | null>(null);
   const toastId = useRef(0);
-  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const pagerRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const swipe = useRef<{ id: number; x: number; y: number; t: number; locked: boolean } | null>(null);
+  // Идёт перетаскивание экрана: соседний экран должен быть виден, а не спрятан visibility.
+  const [peek, setPeek] = useState(false);
 
   const year = viewYear ?? (today ? yearOf(today) : null);
   const settings = state?.settings;
@@ -298,6 +308,43 @@ export function GardenApp() {
     root.setAttribute("data-mood-palette", settings.moodPalette);
     root.setAttribute("data-plant-palette", settings.plantPalette);
   }, [settings]);
+
+  // Полноэкранный тёмный фон до самого верха: iOS рисует свои часы поверх, а под ними должен быть наш цвет, не серый.
+  // Это страховка на стороне клиента; основа это viewportFit: "cover", themeColor и statusBarStyle "black-translucent" в layout.
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prev = {
+      htmlBg: html.style.backgroundColor,
+      bodyBg: body.style.backgroundColor,
+      htmlOverscroll: html.style.overscrollBehaviorX,
+      bodyOverscroll: body.style.overscrollBehaviorX,
+    };
+    html.style.backgroundColor = APP_BG;
+    body.style.backgroundColor = APP_BG;
+    // Страница не тянется вбок и не уходит «назад» жестом от края.
+    html.style.overscrollBehaviorX = "none";
+    body.style.overscrollBehaviorX = "none";
+    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    const created = !meta;
+    const prevTheme = meta?.content;
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.name = "theme-color";
+      document.head.appendChild(meta);
+    }
+    meta.content = APP_BG;
+    return () => {
+      html.style.backgroundColor = prev.htmlBg;
+      body.style.backgroundColor = prev.bodyBg;
+      html.style.overscrollBehaviorX = prev.htmlOverscroll;
+      body.style.overscrollBehaviorX = prev.bodyOverscroll;
+      if (meta) {
+        if (created) meta.remove();
+        else if (prevTheme !== undefined) meta.content = prevTheme;
+      }
+    };
+  }, []);
 
   // Раз за запуск убираем фото, на которые не ссылается ни одна запись (см. PhotoStore.sweep).
   // Состояние берём свежее, в момент уборки. Если записи не загрузились или не сохраняются, не трогаем ничего:
@@ -400,28 +447,86 @@ export function GardenApp() {
     });
   }
 
-  // Свайп влево открывает «Сад», вправо возвращает на «Сегодня». Вертикальная прокрутка остаётся за браузером (touch-pan-y).
-  function onPointerUp(e: React.PointerEvent) {
-    const start = swipeStart.current;
-    swipeStart.current = null;
-    if (!start) return;
-    const dx = e.clientX - start.x;
-    const dy = e.clientY - start.y;
-    if (Math.abs(dx) < SWIPE_MIN_PX || Math.abs(dx) < Math.abs(dy) * SWIPE_RATIO) return;
-    setView(dx < 0 ? "garden" : "today");
+  /* Свайп между «Сегодня» и «Садом»: экран идёт за пальцем, на отпускании доезжает пружинистым переходом.
+     Во время жеста transform пишем прямо в элемент (без setState на каждый пиксель), чтобы не перерисовывать экран.
+     Вертикальная прокрутка остаётся за браузером (touch-pan-y). Полоска дней и стопка фото гасят pointerdown
+     у себя (stopPropagation), поэтому их собственные жесты экраны не переключают. */
+  const TRACK_TODAY = "translate3d(0,0,0)";
+  const TRACK_GARDEN = "translate3d(-50%,0,0)";
+
+  function onSwipeDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    swipe.current = { id: e.pointerId, x: e.clientX, y: e.clientY, t: performance.now(), locked: false };
   }
 
-  const pageStyle = (active: boolean) => ({
-    visibility: active ? ("visible" as const) : ("hidden" as const),
-    // Скрываем неактивную страницу от фокуса и экранных читалок только после окончания анимации.
-    transition: `visibility 0s linear ${active ? "0s" : "0.3s"}`,
-  });
+  function onSwipeMove(e: React.PointerEvent<HTMLDivElement>) {
+    const s = swipe.current;
+    const pager = pagerRef.current;
+    const track = trackRef.current;
+    if (!s || !pager || !track || e.pointerId !== s.id) return;
+    let dx = e.clientX - s.x;
+    const dy = e.clientY - s.y;
+    if (!s.locked) {
+      // Вертикальный жест: это прокрутка, не наш.
+      if (Math.abs(dy) > SWIPE_LOCK_PX && Math.abs(dy) > Math.abs(dx)) {
+        swipe.current = null;
+        return;
+      }
+      if (Math.abs(dx) < SWIPE_LOCK_PX || Math.abs(dx) < Math.abs(dy) * SWIPE_LOCK_RATIO) return;
+      s.locked = true;
+      // Отсчёт от места захвата, чтобы страница не прыгнула на 10 px.
+      s.x = e.clientX;
+      s.t = performance.now();
+      dx = 0;
+      pager.setPointerCapture(e.pointerId);
+      track.style.transition = "none";
+      window.getSelection()?.removeAllRanges();
+      setPeek(true);
+    }
+    const w = pager.clientWidth;
+    const pastEdge = (view === "today" && dx > 0) || (view === "garden" && dx < 0);
+    const offset = Math.max(-w, Math.min(w, pastEdge ? dx * SWIPE_EDGE_RESISTANCE : dx));
+    const base = view === "garden" ? -w : 0;
+    track.style.transform = `translate3d(${base + offset}px,0,0)`;
+  }
+
+  function endSwipe(e: React.PointerEvent<HTMLDivElement>, cancelled: boolean) {
+    const s = swipe.current;
+    swipe.current = null;
+    const pager = pagerRef.current;
+    const track = trackRef.current;
+    if (!s || !s.locked || !pager || !track) return;
+    if (pager.hasPointerCapture(e.pointerId)) pager.releasePointerCapture(e.pointerId);
+    const dx = e.clientX - s.x;
+    const speed = Math.abs(dx) / Math.max(1, performance.now() - s.t);
+    const commit =
+      !cancelled && (Math.abs(dx) > pager.clientWidth * SWIPE_COMMIT_FRACTION || (speed > SWIPE_COMMIT_SPEED && Math.abs(dx) > SWIPE_COMMIT_MIN_PX));
+    let next: View = view;
+    if (commit) {
+      if (dx < 0 && view === "today") next = "garden";
+      else if (dx > 0 && view === "garden") next = "today";
+    }
+    // Возвращаем переход из класса и плавно доводим страницу до нужного положения.
+    track.style.transition = "";
+    track.style.transform = next === "garden" ? TRACK_GARDEN : TRACK_TODAY;
+    setPeek(false);
+    if (next !== view) setView(next);
+  }
+
+  const pageStyle = (active: boolean) => {
+    const shown = active || peek;
+    return {
+      visibility: shown ? ("visible" as const) : ("hidden" as const),
+      // Скрываем неактивную страницу от фокуса и экранных читалок только после окончания анимации.
+      transition: `visibility 0s linear ${shown ? "0s" : "0.3s"}`,
+    };
+  };
 
   return (
     <>
-      <main className="flex h-dvh flex-col bg-[#02001a] text-[#5b3dff]">
-        <CustomStatusBar />
-        {/* Верхняя строка: лента слева, копия и настройки справа. Отступ под «чёлку» теперь делает CustomStatusBar. */}
+      {/* Фон заливает экран до самого верха; под системные часы iOS подкладывается отступ safe-area, без своей строки состояния. */}
+      <main className="flex h-dvh flex-col overflow-hidden bg-[#02001a] pt-[env(safe-area-inset-top)] text-[#5b3dff]">
+        {/* Верхняя строка: лента слева, копия и настройки справа. */}
         <header className="flex min-h-14 items-center justify-between px-(--layout-gutter)">
           {view === "feed" ? (
             <Button variant="ghost" onClick={() => setView("today")}>
@@ -469,18 +574,17 @@ export function GardenApp() {
           </section>
         ) : (
           <div
-            className="relative min-h-0 flex-1 touch-pan-y overflow-hidden"
-            onPointerDown={(e) => {
-              swipeStart.current = { x: e.clientX, y: e.clientY };
-            }}
-            onPointerUp={onPointerUp}
-            onPointerCancel={() => {
-              swipeStart.current = null;
-            }}
+            ref={pagerRef}
+            className="relative min-h-0 flex-1 touch-pan-y overflow-hidden overscroll-x-none"
+            onPointerDown={onSwipeDown}
+            onPointerMove={onSwipeMove}
+            onPointerUp={(e) => endSwipe(e, false)}
+            onPointerCancel={(e) => endSwipe(e, true)}
           >
             <div
-              className="flex h-full w-[200%] transition-transform duration-300 ease-out motion-reduce:transition-none"
-              style={{ transform: view === "garden" ? "translateX(-50%)" : "translateX(0)" }}
+              ref={trackRef}
+              className="flex h-full w-[200%] transition-transform duration-300 ease-out will-change-transform motion-reduce:transition-none"
+              style={{ transform: view === "garden" ? TRACK_GARDEN : TRACK_TODAY }}
             >
               {/* Экран «Сегодня» */}
               <section className="flex h-full w-1/2 flex-col px-(--layout-gutter) pb-32" style={pageStyle(view === "today")}>
@@ -539,14 +643,15 @@ export function GardenApp() {
           </div>
         )}
 
-        {/* Нижняя панель: Сад / Сегодня */}
+        {/* Нижняя панель. Порядок кнопок совпадает с порядком экранов: «Сегодня» слева, «Сад» справа,
+            как и сами экраны (свайп влево открывает «Сад»). Подсветка следит за тем, какой экран на самом деле открыт. */}
         <nav aria-label="Разделы" className="pointer-events-none fixed inset-x-0 bottom-0 z-10 flex justify-center pb-[max(1rem,env(safe-area-inset-bottom))]">
           <div className="pointer-events-auto flex gap-1 rounded-3xl border border-[#5b3dff]/30 bg-[#16103f]/80 p-1.5 backdrop-blur">
-            <NavButton active={view === "garden"} label="Сад" onClick={() => setView("garden")}>
-              <IconGardenGroup className="h-8 w-14" />
-            </NavButton>
             <NavButton active={view === "today"} label="Сегодня" onClick={() => setView("today")}>
               <IconFlower className="size-9" />
+            </NavButton>
+            <NavButton active={view === "garden"} label="Сад" onClick={() => setView("garden")}>
+              <IconGardenGroup className="h-8 w-14" />
             </NavButton>
           </div>
         </nav>

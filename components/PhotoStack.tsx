@@ -54,7 +54,43 @@ export const PhotoStack = memo(function PhotoStack({ photos, renderPhoto, onOpen
   const moved = useRef(false);
   const timer = useRef<number | undefined>(undefined);
 
+  const groupRef = useRef<HTMLDivElement>(null);
+  const swipeable = photos.length > 1;
+
   useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  // Горизонтальный жест на стопке принадлежит только стопке: гасим «родную» прокрутку и оттяжку страницы.
+  // React вешает touch-слушатели пассивными, и preventDefault там молча не работает, поэтому слушатель нативный и не пассивный.
+  useEffect(() => {
+    const el = groupRef.current;
+    if (!el || !swipeable) return;
+    let sx = 0;
+    let sy = 0;
+    let horizontal = false;
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      sx = t.clientX;
+      sy = t.clientY;
+      horizontal = false;
+    };
+    const onMove = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (!t) return;
+      if (!horizontal) {
+        const dx = Math.abs(t.clientX - sx);
+        const dy = Math.abs(t.clientY - sy);
+        if (dx > 4 && dx > dy) horizontal = true;
+      }
+      if (horizontal && e.cancelable) e.preventDefault();
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+    };
+  }, [swipeable]);
 
   // Если фото добавили или убрали (редактирование записи), стопка подстраивается и сохраняет порядок оставшихся.
   const ordered = useMemo(() => {
@@ -137,10 +173,12 @@ export const PhotoStack = memo(function PhotoStack({ photos, renderPhoto, onOpen
   return (
     <div className={className}>
       <div
+        ref={groupRef}
         role="group"
         aria-roledescription="стопка фотографий"
         aria-label={`Фотографии: ${currentIndex + 1} из ${photos.length}`}
-        className="relative mx-auto my-6 aspect-[4/5] w-[min(78%,18rem)]"
+        // touch-pan-y: по вертикали страница листается, по горизонтали жест остаётся у стопки. overscroll-x-none: без оттяжки вбок.
+        className="relative mx-auto my-6 aspect-[4/5] w-[min(78%,18rem)] touch-pan-y overscroll-x-none"
       >
         {photos.map((photo) => {
           const depth = depthOf.get(photo.id) ?? 0;

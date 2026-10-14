@@ -1,10 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { compareKeys, formatLong, formatShort, yearOf, type DateKey } from "../lib/date.ts";
+import { compareKeys, formatShort, type DateKey } from "../lib/date.ts";
 import type { PhotoStore } from "../lib/photos.ts";
 import type { EntryMap } from "../lib/repo.ts";
-import { LIMITS, MOOD_VALUES, photosOf, type Entry } from "../lib/types.ts";
+import { LIMITS, photosOf, type Entry } from "../lib/types.ts";
 import { FeedPhoto } from "./FeedPhoto.tsx";
 import { PhotoStack, type StackPhoto } from "./PhotoStack.tsx";
 import { Button } from "./ui.tsx";
@@ -60,40 +60,27 @@ export function MemoryFeed({ entries, store, onOpen }: MemoryFeedProps) {
   return (
     <div>
       <ol className="space-y-8">
-        {shown.map((entry, i) => {
-          const year = yearOf(entry.date);
-          const newYear = i === 0 || yearOf((shown[i - 1] as Entry).date) !== year;
-          return (
-            <li key={entry.date}>
-              {newYear && <h2 className="mb-2 mt-2 text-lg tabular-nums text-text-muted">{year}</h2>}
-              {/* Запись лежит прямо на фоне приложения: без рамки, подложки и отступов. Вся область записи открывает редактор. */}
-              <article
-                onClick={() => {
-                  // Если человек выделял текст, это не касание «открыть».
-                  if (window.getSelection()?.toString()) return;
-                  onOpen(entry.date);
-                }}
-                className="cursor-pointer [-webkit-tap-highlight-color:transparent] transition-opacity duration-(--duration-fast) active:opacity-80"
-              >
-                <header>
-                  {/* Дата это и есть кнопка для клавиатуры и скринридера; касание мышью или пальцем ловит вся запись */}
-                  <h3 className="text-base first-letter:uppercase text-text">
-                    <button type="button" aria-label={`Изменить запись за ${formatShort(entry.date)}`} className="text-left">
-                      {formatLong(entry.date)}
-                    </button>
-                  </h3>
-                </header>
-                {entry.mood !== null && (
-                  <p className="text-sm text-text-muted">
-                    Настроение: {entry.mood} из {MOOD_VALUES.length}
-                  </p>
-                )}
-                {entry.body !== "" && <p className="mt-2 whitespace-pre-wrap break-words font-entry text-entry text-text">{entry.body}</p>}
-                <EntryPhotos entry={entry} store={store} />
-              </article>
-            </li>
-          );
-        })}
+        {shown.map((entry) => (
+          <li key={entry.date}>
+            {/* Запись лежит прямо на фоне приложения: только текст и фото, без даты, настроения, рамки и подложки.
+                Вся область записи открывает редактор. */}
+            <article
+              onClick={() => {
+                // Если человек выделял текст, это не касание «открыть».
+                if (window.getSelection()?.toString()) return;
+                onOpen(entry.date);
+              }}
+              className="cursor-pointer [-webkit-tap-highlight-color:transparent] transition-opacity duration-(--duration-fast) active:opacity-80"
+            >
+              {/* Невидимая кнопка только для клавиатуры и скринридера: на экране ничего не рисует */}
+              <button type="button" className="sr-only">
+                {`Изменить запись за ${formatShort(entry.date)}`}
+              </button>
+              {entry.body !== "" && <p className="whitespace-pre-wrap break-words font-entry text-entry text-text">{entry.body}</p>}
+              <EntryPhotos entry={entry} store={store} />
+            </article>
+          </li>
+        ))}
       </ol>
       {list.length > shown.length && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
