@@ -43,13 +43,10 @@ function NavButton({ active, label, onClick, children }: { active: boolean; labe
       onClick={onClick}
       className="relative isolate grid h-[4.25rem] w-[4.5rem] place-items-center rounded-2xl"
     >
-      {/* Активная плашка отдельным слоем позади иконки; прозрачность вместо смены цвета фона кнопки */}
       <span
         aria-hidden="true"
         className={`absolute inset-0 -z-10 rounded-2xl bg-[#5b3dff] transition-opacity duration-(--duration-fast) ${active ? "opacity-100" : "opacity-0"}`}
       />
-      {/* Иконка поверх плашки. Цвет задан прямо на svg (!), чтобы собственный цвет иконки не слился с плашкой:
-          на активной белая, на неактивной светло-фиолетовая. */}
       <span
         className={`relative z-10 grid place-items-center transition-colors duration-(--duration-fast) ${
           active ? "text-white [&_svg]:!text-white" : "text-[#9a85ff] [&_svg]:!text-[#9a85ff]"
@@ -86,6 +83,23 @@ function PlantButton({ label, onClick }: { label: string; onClick: () => void })
         </svg>
       </span>
       {label}
+    </button>
+  );
+}
+
+/** Небольшая кнопка «Today →» в правом верхнем углу: возвращает к сегодняшнему дню. */
+function TodayButton({ dimmed, onClick }: { dimmed: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label="Перейти к сегодняшнему дню"
+      className={`flex min-h-11 items-center gap-1 rounded-full px-3 font-mono text-sm text-[#9a85ff] transition-[opacity,transform] duration-(--duration-fast) active:scale-95 ${
+        dimmed ? "opacity-40" : "opacity-100"
+      }`}
+    >
+      Today
+      <span aria-hidden="true">→</span>
     </button>
   );
 }
@@ -140,9 +154,8 @@ const StripDay = memo(function StripDay({
 
 /**
  * Полоска дней сверху. Листается пальцем по горизонтали (touch-pan-x, нативная инерция, мягкая привязка).
- * День под рамкой по центру и есть выбранный. Он пересчитывается прямо в onScroll, на каждом кадре движения,
- * поэтому запись внизу меняется «под пальцем», как в сторис. Когда прокрутка затихает, ленту доводит до центра.
- * Тап по другому дню выбирает его и плавно подводит к центру, тап по уже выбранному открывает редактор.
+ * День под рамкой по центру и есть выбранный. Тап по другому дню выбирает его и плавно подводит к центру,
+ * тап по уже выбранному открывает редактор.
  */
 function DayStrip({
   today,
@@ -161,9 +174,9 @@ function DayStrip({
   const scrollerRef = useRef<HTMLUListElement>(null);
   const placed = useRef(false);
   const settleTimer = useRef<number | undefined>(undefined);
-  // Идёт прокрутка, начатая кодом (первая посадка, тап по дню, доводка): выбор из неё не вычисляем.
+  // Идёт прокрутка, начатая кодом (первая посадка, тап по дню, доводка, «Today»): выбор из неё не вычисляем.
   const programmatic = useRef(true);
-  // Идёт прокрутка пальцем: пока она не затихла, ленту не подтягиваем к центру, иначе мы боролись бы с пальцем.
+  // Идёт прокрутка пальцем: пока она не затихла, ленту не подтягиваем к центру.
   const userScroll = useRef(false);
   const lastIndex = useRef(-1);
   // Дни от старых к новым; последний элемент (индекс STRIP_PAST_DAYS) это сегодня.
@@ -179,13 +192,11 @@ function DayStrip({
     programmatic.current = false;
     userScroll.current = false;
     if (!box) return;
-    // Финальный выбор на случай, если последнее событие прокрутки пришло до последнего сдвига.
     const index = indexAtCenter(box);
     if (index !== lastIndex.current) {
       lastIndex.current = index;
       onSelect(days[index] ?? today);
     }
-    // Привязка могла остановиться чуть мимо центра: доводим.
     const left = index * (box.clientWidth / 7);
     if (Math.abs(box.scrollLeft - left) >= 2) {
       programmatic.current = true;
@@ -195,11 +206,13 @@ function DayStrip({
     }
   }
 
-  // Подводим выбранный день к центру, если выбор пришёл не от пальца (тап, первая посадка, смена суток).
-  // В первый раз без анимации, дальше плавно. Три пустых элемента с каждой стороны позволяют подвести к центру любой день.
+  // Подводим выбранный день к центру, если выбор пришёл не от пальца (тап, первая посадка, «Today», смена суток).
   useLayoutEffect(() => {
     const box = scrollerRef.current;
-    if (!box || userScroll.current) return;
+    if (!box) return;
+    // Выбор пришёл от пальца: лента и так стоит на нём.
+    if (userScroll.current && lastIndex.current === selectedIndex) return;
+    userScroll.current = false;
     lastIndex.current = selectedIndex;
     const left = selectedIndex * (box.clientWidth / 7);
     if (Math.abs(box.scrollLeft - left) >= 2) {
@@ -211,14 +224,11 @@ function DayStrip({
       programmatic.current = false;
     }
     placed.current = true;
-    // settle берёт свежие days и today из замыкания этого рендера; лишние зависимости только перезапускали бы подведение.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex, today]);
 
   useEffect(() => () => window.clearTimeout(settleTimer.current), []);
 
-  // Без throttle и debounce: событие прокрутки приходит не чаще раза за кадр, а вычисление это одно деление.
-  // setState вызывается только когда под рамку попал другой день.
   function onScroll() {
     const box = scrollerRef.current;
     if (!box) return;
@@ -235,7 +245,7 @@ function DayStrip({
   }
 
   return (
-    <div className="pt-4">
+    <div className="pt-1">
       <h1 className="mb-2 text-center font-mono text-base" aria-live="polite">
         {selected === today ? "Сегодня" : formatShort(selected)}
       </h1>
@@ -249,7 +259,6 @@ function DayStrip({
           ref={scrollerRef}
           aria-label="Дни"
           onScroll={onScroll}
-          // Жест начинается в полоске: листаем её, а не переключаем экраны «Сегодня» / «Сад». И снова слушаем палец.
           onPointerDown={(e) => {
             e.stopPropagation();
             programmatic.current = false;
@@ -305,14 +314,13 @@ export function GardenApp() {
   const toastId = useRef(0);
   const pagerRef = useRef<HTMLDivElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
+  const dayScrollRef = useRef<HTMLDivElement>(null);
   const swipe = useRef<{ id: number; x: number; y: number; t: number; locked: boolean } | null>(null);
-  // Идёт перетаскивание экрана: соседний экран должен быть виден, а не спрятан visibility.
   const [peek, setPeek] = useState(false);
 
   const year = viewYear ?? (today ? yearOf(today) : null);
   const settings = state?.settings;
 
-  // Палитры из настроек -> атрибуты на <html>. Новый дизайн только тёмный, поэтому тему фиксируем.
   useEffect(() => {
     if (!settings) return;
     const root = document.documentElement;
@@ -321,8 +329,7 @@ export function GardenApp() {
     root.setAttribute("data-plant-palette", settings.plantPalette);
   }, [settings]);
 
-  // Полноэкранный тёмный фон до самого верха: iOS рисует свои часы поверх, а под ними должен быть наш цвет, не серый.
-  // Это страховка на стороне клиента; основа это viewportFit: "cover", themeColor и statusBarStyle "black-translucent" в layout.
+  // Полноэкранный тёмный фон до самого верха.
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
@@ -334,7 +341,6 @@ export function GardenApp() {
     };
     html.style.backgroundColor = APP_BG;
     body.style.backgroundColor = APP_BG;
-    // Страница не тянется вбок и не уходит «назад» жестом от края.
     html.style.overscrollBehaviorX = "none";
     body.style.overscrollBehaviorX = "none";
     let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
@@ -358,8 +364,7 @@ export function GardenApp() {
     };
   }, []);
 
-  // iPhone Safari игнорирует user-scalable=no и всё равно масштабирует щипком двумя пальцами. Эти события есть только в Safari:
-  // гасим их сами. Остальные браузеры обходятся viewport и touch-action.
+  // iPhone Safari масштабирует щипком даже с user-scalable=no: гасим его gesture-события.
   useEffect(() => {
     const stop = (e: Event) => e.preventDefault();
     const types = ["gesturestart", "gesturechange", "gestureend"] as const;
@@ -369,9 +374,7 @@ export function GardenApp() {
     };
   }, []);
 
-  // Раз за запуск убираем фото, на которые не ссылается ни одна запись (см. PhotoStore.sweep).
-  // Состояние берём свежее, в момент уборки. Если записи не загрузились или не сохраняются, не трогаем ничего:
-  // иначе фото существующих записей выглядели бы «ничьими».
+  // Раз за запуск убираем фото, на которые не ссылается ни одна запись.
   const ready = state !== null;
   useEffect(() => {
     if (!ready) return;
@@ -401,7 +404,6 @@ export function GardenApp() {
     [today, showToast],
   );
 
-  // Растения сада по датам: рисунок (shapeId) и настроение (цвет). Наличие даты в карте = есть запись.
   const plants = useMemo<ReadonlyMap<string, PlantInfo>>(() => {
     const map = new Map<string, PlantInfo>();
     if (state) {
@@ -413,14 +415,19 @@ export function GardenApp() {
   }, [state]);
 
   const target = selectedDate ?? today;
-  // Рамка и подсветка в полоске берут target сразу, а тяжёлое содержимое (запись, фото) следует за ним как успеет:
-  // React бросает устаревший рендер, если палец уже на другом дне, поэтому быстрый скраббинг не копит очередь.
   const shownDate = useDeferredValue(target);
 
-  // Стабильный обработчик выбора: иначе memo у дней в полоске перерисовывалось бы целиком на каждый кадр.
   const selectDay = useCallback((key: DateKey) => setSelectedDate(key === today ? null : key), [today]);
 
-  // Запись показанного дня в том же виде, что и вся карта записей: её рисует MemoryFeed. Ссылка стабильна, пока запись не изменилась.
+  /** «Today →»: выбор на сегодня, экран «Сегодня», запись дня прокручена к началу. */
+  const goToday = useCallback(() => {
+    setSelectedDate(null);
+    setView("today");
+    requestAnimationFrame(() => {
+      dayScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }, []);
+
   const shownEntries = useMemo(() => {
     if (!state || !shownDate) return null;
     const e = state.entries[shownDate];
@@ -442,6 +449,7 @@ export function GardenApp() {
   const shownDay = shownDate ?? today;
   const shownPlant = plants.get(shownDay);
   const hasShownEntry = shownEntries !== null && shownPlant !== undefined;
+  const atToday = view === "today" && selected === today;
 
   function onSaved(entry: Entry, wasNew: boolean) {
     setModalDate(null);
@@ -449,7 +457,6 @@ export function GardenApp() {
     setPlanted(entry.date);
     window.setTimeout(() => setPlanted((p) => (p === entry.date ? null : p)), LIMITS.undoDeleteMs / 5);
     showToast(wasNew ? "Записано. Растение уже в саду." : "Запись обновлена.");
-    // Просим браузер не вычищать данные при нехватке места; ответ нам не важен.
     void navigator.storage?.persist?.().catch(() => undefined);
   }
 
@@ -470,10 +477,8 @@ export function GardenApp() {
     });
   }
 
-  /* Свайп между «Сегодня» и «Садом»: экран идёт за пальцем, на отпускании доезжает пружинистым переходом.
-     Во время жеста transform пишем прямо в элемент (без setState на каждый пиксель), чтобы не перерисовывать экран.
-     Вертикальная прокрутка остаётся за браузером (touch-pan-y). Полоска дней и стопка фото гасят pointerdown
-     у себя (stopPropagation), поэтому их собственные жесты экраны не переключают. */
+  /* Свайп между «Сегодня» и «Садом». Полоска дней и стопка фото гасят pointerdown у себя,
+     поэтому их собственные жесты экраны не переключают. */
   const TRACK_TODAY = "translate3d(0,0,0)";
   const TRACK_GARDEN = "translate3d(-50%,0,0)";
 
@@ -490,14 +495,12 @@ export function GardenApp() {
     let dx = e.clientX - s.x;
     const dy = e.clientY - s.y;
     if (!s.locked) {
-      // Вертикальный жест: это прокрутка, не наш.
       if (Math.abs(dy) > SWIPE_LOCK_PX && Math.abs(dy) > Math.abs(dx)) {
         swipe.current = null;
         return;
       }
       if (Math.abs(dx) < SWIPE_LOCK_PX || Math.abs(dx) < Math.abs(dy) * SWIPE_LOCK_RATIO) return;
       s.locked = true;
-      // Отсчёт от места захвата, чтобы страница не прыгнула на 10 px.
       s.x = e.clientX;
       s.t = performance.now();
       dx = 0;
@@ -529,7 +532,6 @@ export function GardenApp() {
       if (dx < 0 && view === "today") next = "garden";
       else if (dx > 0 && view === "garden") next = "today";
     }
-    // Возвращаем переход из класса и плавно доводим страницу до нужного положения.
     track.style.transition = "";
     track.style.transform = next === "garden" ? TRACK_GARDEN : TRACK_TODAY;
     setPeek(false);
@@ -540,17 +542,14 @@ export function GardenApp() {
     const shown = active || peek;
     return {
       visibility: shown ? ("visible" as const) : ("hidden" as const),
-      // Скрываем неактивную страницу от фокуса и экранных читалок только после окончания анимации.
       transition: `visibility 0s linear ${shown ? "0s" : "0.3s"}`,
     };
   };
 
   return (
     <>
-      {/* Фон заливает экран до самого верха; под системные часы iOS подкладывается отступ safe-area, без своей строки состояния. */}
       <main className="flex h-dvh flex-col overflow-hidden bg-[#02001a] pt-[env(safe-area-inset-top)] text-[#5b3dff]">
-        {/* Нижний отступ под жестовую полосу делает навигация ниже (pb safe-area), а не body. */}
-        {/* Верхняя строка: лента слева, копия и настройки справа. */}
+        {/* Верхняя строка: лента слева; «Today →», копия и настройки справа. */}
         <header className="flex min-h-14 items-center justify-between px-(--layout-gutter)">
           {view === "feed" ? (
             <Button variant="ghost" onClick={() => setView("today")}>
@@ -561,9 +560,12 @@ export function GardenApp() {
               Лента
             </Button>
           )}
-          <IconButton label="Копия и настройки" onClick={() => setPanelOpen(true)}>
-            <IconSettings />
-          </IconButton>
+          <div className="flex items-center gap-1">
+            <TodayButton dimmed={atToday} onClick={goToday} />
+            <IconButton label="Копия и настройки" onClick={() => setPanelOpen(true)}>
+              <IconSettings />
+            </IconButton>
+          </div>
         </header>
 
         {!state.persistent && (
@@ -594,7 +596,7 @@ export function GardenApp() {
           <section className="h-full min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-(--layout-gutter) pb-32 text-text [-webkit-overflow-scrolling:touch]">
             <h1 className="mb-1 text-xl">Лента воспоминаний</h1>
             <p className="mb-4 text-sm tabular-nums text-text-muted">Записей: {Object.keys(state.entries).length}</p>
-            <MemoryFeed entries={state.entries} store={photoStore} onOpen={openDate} />
+            <MemoryFeed entries={state.entries} repo={repo} store={photoStore} onOpen={openDate} />
           </section>
         ) : (
           <div
@@ -612,23 +614,13 @@ export function GardenApp() {
             >
               {/* Экран «Сегодня» */}
               <section className="flex h-full w-1/2 flex-col px-(--layout-gutter) pb-32" style={pageStyle(view === "today")}>
-                <DayStrip
-                  today={today}
-                  selected={selected}
-                  plants={plants}
-                  onSelect={selectDay}
-                  onOpen={openDate}
-                />
-                {/* Содержимое выбранного дня. Меняется сразу, без угасания: так работает скраббинг. Новый день чуть проявляется. */}
+                <DayStrip today={today} selected={selected} plants={plants} onSelect={selectDay} onOpen={openDate} />
                 <div key={shownDay} className="flex min-h-0 flex-1 flex-col transition-opacity duration-150 starting:opacity-60 motion-reduce:transition-none">
                   {hasShownEntry ? (
-                    // Запись за день: растение и сама запись. Касание растения или пустого места открывает редактор
-                    // (текст, фото, удаление); карточка записи открывает его сама через onOpen.
+                    // Растение и запись. Тап по тексту открывает редактор текста, фото управляются прямо здесь.
                     <div
-                      className="min-h-0 flex-1 cursor-pointer overflow-y-auto overscroll-y-contain pt-4 [-webkit-overflow-scrolling:touch]"
-                      onClick={(e) => {
-                        if (e.target === e.currentTarget) openDate(shownDay);
-                      }}
+                      ref={dayScrollRef}
+                      className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain pt-4 [-webkit-overflow-scrolling:touch]"
                     >
                       <button
                         type="button"
@@ -643,7 +635,7 @@ export function GardenApp() {
                           className={`size-28 ${planted === shownDay ? "animate-pulse" : ""}`}
                         />
                       </button>
-                      <MemoryFeed entries={shownEntries} store={photoStore} onOpen={openDate} />
+                      <MemoryFeed entries={shownEntries} repo={repo} store={photoStore} onOpen={openDate} />
                     </div>
                   ) : (
                     <div className="grid flex-1 place-items-center">
@@ -667,8 +659,7 @@ export function GardenApp() {
           </div>
         )}
 
-        {/* Нижняя панель. Порядок кнопок совпадает с порядком экранов: «Сегодня» слева, «Сад» справа,
-            как и сами экраны (свайп влево открывает «Сад»). Подсветка следит за тем, какой экран на самом деле открыт. */}
+        {/* Нижняя панель: «Сегодня» слева, «Сад» справа, как и сами экраны. */}
         <nav aria-label="Разделы" className="pointer-events-none fixed inset-x-0 bottom-0 z-10 flex justify-center pb-[max(1rem,env(safe-area-inset-bottom))]">
           <div className="pointer-events-auto flex gap-1 rounded-3xl border border-[#5b3dff]/30 bg-[#16103f]/80 p-1.5 backdrop-blur">
             <NavButton active={view === "today"} label="Сегодня" onClick={() => setView("today")}>
