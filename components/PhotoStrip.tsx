@@ -25,14 +25,23 @@ export interface PhotoPicker {
   room: number;
   max: number;
   openGallery: () => void;
-  openCamera: () => void;
-  /** Скрытые <input type="file">: вставьте один раз в разметку. */
+  /**
+   * Добавляет готовые файлы тем же путём, что и выбор из галереи: лимит в 5 фото, сжатие по одному, счётчик busy.
+   * Через него снимок из CustomCamera попадает в состояние редактора.
+   */
+  addFiles: (files: File[]) => Promise<void>;
+  /** Скрытый <input type="file"> для галереи: вставьте один раз в разметку. */
   inputs: ReactNode;
 }
 
+/**
+ * Типы для выбора из галереи. Без атрибута capture: так браузер предлагает медиатеку, а не камеру.
+ * Внимание: в iOS наличие image/heic в списке отключает автоматическое превращение HEIC в JPEG, и файл приходит как есть.
+ */
+const GALLERY_ACCEPT = "image/jpeg, image/png, image/heic, image/webp";
+
 export function usePhotoPicker({ items, onChange, onError }: PhotoPickerOptions): PhotoPicker {
   const galleryRef = useRef<HTMLInputElement>(null);
-  const cameraRef = useRef<HTMLInputElement>(null);
   const alive = useRef(true);
   const [busy, setBusy] = useState(0);
   const max = LIMITS.maxPhotosPerEntry;
@@ -45,9 +54,13 @@ export function usePhotoPicker({ items, onChange, onError }: PhotoPickerOptions)
     };
   }, []);
 
-  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = ""; // чтобы тот же файл можно было выбрать ещё раз
+    void addFiles(files);
+  }
+
+  async function addFiles(files: File[]) {
     if (files.length === 0) return;
     onError(null);
     const take = files.slice(0, Math.max(0, room));
@@ -69,19 +82,14 @@ export function usePhotoPicker({ items, onChange, onError }: PhotoPickerOptions)
     if (failure && alive.current) onError(failure);
   }
 
-  const inputs = (
-    <>
-      <input ref={galleryRef} type="file" accept="image/*" multiple className="hidden" onChange={onPick} tabIndex={-1} aria-hidden="true" />
-      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={onPick} tabIndex={-1} aria-hidden="true" />
-    </>
-  );
+  const inputs = <input ref={galleryRef} type="file" accept={GALLERY_ACCEPT} multiple className="hidden" onChange={onPick} tabIndex={-1} aria-hidden="true" />;
 
   return {
     busy,
     room,
     max,
     openGallery: () => galleryRef.current?.click(),
-    openCamera: () => cameraRef.current?.click(),
+    addFiles,
     inputs,
   };
 }

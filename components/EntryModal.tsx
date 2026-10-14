@@ -8,6 +8,7 @@ import { itemsOf, sameItems, saveEntryWithPhotos, type PhotoItem } from "../lib/
 import type { PhotoStore } from "../lib/photos.ts";
 import { MoodPicker } from "./MoodPicker.tsx";
 import { MoodFlower } from "./MoodFlower.tsx";
+import { CustomCamera } from "./CustomCamera.tsx";
 import { PhotoGallery, usePhotoPicker } from "./PhotoStrip.tsx";
 import { SketchCloseButton, SketchDefs, SketchDoneButton, SketchIconButton, SketchSquare, randomShapeId, resolveShapeId } from "./SketchUI.tsx";
 import { Button } from "./ui.tsx";
@@ -95,6 +96,8 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   const [saving, setSaving] = useState(false);
   /** write — пишем; mood — окно с цветком и настроением, оно видно только перед сохранением. */
   const [step, setStep] = useState<"write" | "mood">("write");
+  /** Открыта своя камера (поверх окна записи). */
+  const [cameraOpen, setCameraOpen] = useState(false);
   const formRef = useRef(form);
   formRef.current = form;
   const dateRef = useRef(date);
@@ -186,11 +189,11 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     };
   }, []);
 
-  // Пока открыто окно с цветком, остальное недоступно для фокуса и скринридера.
+  // Пока открыто окно с цветком или камера, остальное недоступно для фокуса и скринридера.
   useEffect(() => {
-    if (mainRef.current) mainRef.current.inert = step === "mood";
+    if (mainRef.current) mainRef.current.inert = step === "mood" || cameraOpen;
     if (step === "mood") requestAnimationFrame(() => sheetDoneRef.current?.focus());
-  }, [step]);
+  }, [step, cameraOpen]);
 
   // Автосохранение черновика с задержкой.
   useEffect(() => {
@@ -313,7 +316,12 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
       aria-labelledby={titleId}
       onClose={handleClose}
       onCancel={(e) => {
-        // Esc в окне с цветком возвращает к тексту, а не закрывает запись.
+        // Esc в камере закрывает только камеру, а в окне с цветком возвращает к тексту: запись не закрывается.
+        if (cameraOpen) {
+          e.preventDefault();
+          setCameraOpen(false);
+          return;
+        }
         if (step === "mood") {
           e.preventDefault();
           setStep("write");
@@ -443,7 +451,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
           <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-2" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
             <div className="flex items-center gap-3">
               <SketchIconButton icon="gallery" label="Добавить фото из галереи" onClick={picker.openGallery} disabled={!canAddPhoto} />
-              <SketchIconButton icon="camera" label="Сделать фото" onClick={picker.openCamera} disabled={!canAddPhoto} />
+              <SketchIconButton icon="camera" label="Сделать фото" onClick={() => setCameraOpen(true)} disabled={!canAddPhoto} />
               {hasPhotos && (
                 <span className="text-lg tabular-nums text-(color:--ink)" aria-label={`Фото: ${form.photos.length} из ${picker.max}`}>
                   {form.photos.length}/{picker.max}
@@ -486,6 +494,16 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
               </div>
             </div>
           </div>
+        )}
+
+        {/* Своя камера: снимок идёт в тот же список фото, что и выбор из галереи */}
+        {cameraOpen && (
+          <CustomCamera
+            onCapture={(file) => {
+              void picker.addFiles([file]);
+            }}
+            onClose={() => setCameraOpen(false)}
+          />
         )}
 
         {picker.inputs}
