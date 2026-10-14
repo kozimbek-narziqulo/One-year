@@ -2,52 +2,88 @@
 
 import { useEffect } from "react";
 
-/** Регистрирует service worker (только в рабочей сборке) и следит за обновлениями. Ничего не рисует. */
+// Фокус в поле ввода: перезагрузка сейчас потеряла бы несохранённый текст записи.
+function isTyping(): boolean {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el) return false;
+  return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable;
+}
+
 export function PwaRegister() {
   useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return; // в `next dev` кэш мешал бы разработке
-    if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+    if (!("serviceWorker" in navigator)) return;
+    if (process.env.NODE_ENV !== "production") return; // в dev SW только мешает
 
-    // Если страницу уже вела старая версия, после смены версии перезагружаемся один раз,
-    // чтобы не оставаться на смеси старых и новых файлов. Не трогаем, пока открыто окно записи.
-    const hadController = !!navigator.serviceWorker.controller;
-    let reloaded = false;
-    const onChange = () => {
-      if (!hadController || reloaded) return;
-      if (document.querySelector("dialog[open]")) return; // применится при следующем открытии
-      reloaded = true;
+    // Если страница уже была под управлением SW, смена контроллера означает обновление.
+    // При самой первой установке контроллера нет, и перезагружать ничего не нужно.
+    let hadController = !!navigator.serviceWorker.controller;
+    let reloading = false;
+    let pendingReload = false;
+    let registration: ServiceWorkerRegistration | undefined;
+    let interval: number | undefined;
+
+    const tryReload = () => {
+      if (reloading) return;
+      if (isTyping()) {
+        pendingReload = true; // доделаем, когда пользователь выйдет из поля
+        return;
+      }
+      reloading = true;
       window.location.reload();
     };
-    navigator.serviceWorker.addEventListener("controllerchange", onChange);
 
-    let cancelled = false;
-    const start = async () => {
-      try {
-        const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
-        // Запасной путь: просим SW сохранить то, что эта страница уже загрузила.
-        const ready = await navigator.serviceWorker.ready;
-        if (cancelled) return;
-        const urls = performance
-          .getEntriesByType("resource")
-          .map((e) => e.name)
-          .filter((n) => n.startsWith(window.location.origin));
-        ready.active?.postMessage({ type: "CACHE_URLS", urls: [window.location.pathname, ...urls] });
-        // Проверка обновлений при возвращении в приложение (на телефоне оно месяцами «спит» в фоне).
-        const check = () => {
-          if (document.visibilityState === "visible") void reg.update().catch(() => undefined);
-        };
-        document.addEventListener("visibilitychange", check);
-      } catch {
-        /* без офлайна приложение всё равно работает */
+    const onControllerChange = () => {
+      if (!hadController) {
+        hadController = true;
+        return;
       }
+      tryReload();
     };
-    if (document.readyState === "complete") void start();
-    else window.addEventListener("load", () => void start(), { once: true });
+
+    const onFocusOut = () => {
+      if (pendingReload) setTimeout(tryReload, 300); // фокус мог просто перейти в соседнее поле
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState !== "visible") return;
+      if (pendingReload) tryReload();
+      registration?.update().catch(() => {}); // на iPhone приложение долго висит в фоне
+    };
+
+    const onUpdateFound = () => {
+      const installing = registration?.installing;
+      if (!installing) return;
+      installing.addEventListener("statechange", () => {
+        // Новая версия установилась. Из-за skipWaiting она сразу активируется,
+        // после чего сработает controllerchange и страница перезагрузится.
+        if (installing.state === "installed" && navigator.serviceWorker.controller) {
+          console.info("[pwa] новая версия установлена, обновляем…");
+        }
+      });
+    };
+
+    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+    document.addEventListener("focusout", onFocusOut);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    navigator.serviceWorker
+      .register("/sw.js", { scope: "/", updateViaCache: "none" })
+      .then((reg) => {
+        registration = reg;
+        reg.addEventListener("updatefound", onUpdateFound);
+        reg.update().catch(() => {});
+        interval = window.setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+      })
+      .catch((err) => console.error("[pwa] не удалось зарегистрировать SW", err));
 
     return () => {
-      cancelled = true;
-      navigator.serviceWorker.removeEventListener("controllerchange", onChange);
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+      document.removeEventListener("focusout", onFocusOut);
+      document.removeEventListener("visibilitychange", onVisibility);
+      registration?.removeEventListener("updatefound", onUpdateFound);
+      if (interval) window.clearInterval(interval);
     };
   }, []);
+
   return null;
 }
