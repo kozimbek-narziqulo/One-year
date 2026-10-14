@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getPhotoStore, getRepo, useGardenState, useToday } from "../hooks/useGarden.ts";
 import { APP_NAME } from "../lib/brand.ts";
 import { compareKeys, daysElapsed, daysInYear, formatShort, yearOf, type DateKey } from "../lib/date.ts";
@@ -22,8 +22,6 @@ import { Button, IconButton, IconSettings } from "./ui.tsx";
 // Свайп: минимум 50 px по горизонтали и заметно больше, чем по вертикали.
 const SWIPE_MIN_PX = 50;
 const SWIPE_RATIO = 1.5;
-// Сколько длится угасание старого содержимого перед показом нового (мс).
-const CONTENT_FADE_MS = 160;
 
 type View = "today" | "garden" | "feed";
 
@@ -89,10 +87,44 @@ function StripPlant({ plant, dateKey, className, strokeWidth = 3 }: { plant: Pla
   );
 }
 
+/** Один день в полоске. memo: при смене выбора перерисовываются только два дня (был и стал), а не все девяносто. */
+const StripDay = memo(function StripDay({
+  dayKey,
+  today,
+  plant,
+  isSelected,
+  onSelect,
+  onOpen,
+}: {
+  dayKey: DateKey;
+  today: DateKey;
+  plant: PlantInfo | undefined;
+  isSelected: boolean;
+  onSelect: (key: DateKey) => void;
+  onOpen: (key: DateKey) => void;
+}) {
+  return (
+    <li className="aspect-square w-[calc(100%/7)] shrink-0 snap-center">
+      <button
+        type="button"
+        onClick={() => (isSelected ? onOpen(dayKey) : onSelect(dayKey))}
+        aria-label={`${dayKey === today ? "Сегодня, " : ""}${formatShort(dayKey)}${plant ? ", есть запись" : ", записи нет"}`}
+        aria-current={isSelected ? "date" : undefined}
+        className="grid size-full place-items-center rounded-full"
+      >
+        <span className={`grid place-items-center transition-transform duration-300 motion-reduce:transition-none ${isSelected ? "scale-125" : ""}`}>
+          {plant ? <StripPlant plant={plant} dateKey={dayKey} className="size-6" /> : <span className="size-1 rounded-full bg-current" />}
+        </span>
+      </button>
+    </li>
+  );
+});
+
 /**
  * Полоска дней сверху. Листается пальцем по горизонтали (touch-pan-x, нативная инерция, мягкая привязка).
- * День под рамкой по центру и есть выбранный: когда прокрутка успокаивается, он сообщается наружу.
- * Тап по другому дню выбирает его и подводит к центру, тап по уже выбранному открывает редактор.
+ * День под рамкой по центру и есть выбранный. Он пересчитывается прямо в onScroll, на каждом кадре движения,
+ * поэтому запись внизу меняется «под пальцем», как в сторис. Когда прокрутка затихает, ленту доводит до центра.
+ * Тап по другому дню выбирает его и плавно подводит к центру, тап по уже выбранному открывает редактор.
  */
 function DayStrip({
   today,
@@ -104,37 +136,84 @@ function DayStrip({
   today: DateKey;
   selected: DateKey;
   plants: ReadonlyMap<string, PlantInfo>;
+  /** Должна быть стабильной (useCallback), иначе memo у дней не сработает. */
   onSelect: (key: DateKey) => void;
   onOpen: (key: DateKey) => void;
 }) {
   const scrollerRef = useRef<HTMLUListElement>(null);
   const placed = useRef(false);
   const settleTimer = useRef<number | undefined>(undefined);
+  // Идёт прокрутка, начатая кодом (первая посадка, тап по дню, доводка): выбор из неё не вычисляем.
+  const programmatic = useRef(true);
+  // Идёт прокрутка пальцем: пока она не затихла, ленту не подтягиваем к центру, иначе мы боролись бы с пальцем.
+  const userScroll = useRef(false);
+  const lastIndex = useRef(-1);
   // Дни от старых к новым; последний элемент (индекс STRIP_PAST_DAYS) это сегодня.
   const days = useMemo(() => Array.from({ length: STRIP_PAST_DAYS + 1 }, (_, i) => shiftKey(today, i - STRIP_PAST_DAYS)), [today]);
   const selectedIndex = Math.max(0, days.indexOf(selected));
 
-  // Подводим выбранный день к центру. В первый раз без анимации, дальше плавно. Три пустых элемента с каждой стороны
-  // нужны, чтобы к центру можно было подвести и самый старый день, и сегодняшний.
+  function indexAtCenter(box: HTMLElement): number {
+    return Math.min(STRIP_PAST_DAYS, Math.max(0, Math.round(box.scrollLeft / (box.clientWidth / 7))));
+  }
+
+  function settle() {
+    const box = scrollerRef.current;
+    programmatic.current = false;
+    userScroll.current = false;
+    if (!box) return;
+    // Финальный выбор на случай, если последнее событие прокрутки пришло до последнего сдвига.
+    const index = indexAtCenter(box);
+    if (index !== lastIndex.current) {
+      lastIndex.current = index;
+      onSelect(days[index] ?? today);
+    }
+    // Привязка могла остановиться чуть мимо центра: доводим.
+    const left = index * (box.clientWidth / 7);
+    if (Math.abs(box.scrollLeft - left) >= 2) {
+      programmatic.current = true;
+      box.scrollTo({ left, behavior: "smooth" });
+      window.clearTimeout(settleTimer.current);
+      settleTimer.current = window.setTimeout(settle, 150);
+    }
+  }
+
+  // Подводим выбранный день к центру, если выбор пришёл не от пальца (тап, первая посадка, смена суток).
+  // В первый раз без анимации, дальше плавно. Три пустых элемента с каждой стороны позволяют подвести к центру любой день.
   useLayoutEffect(() => {
     const box = scrollerRef.current;
-    if (!box) return;
+    if (!box || userScroll.current) return;
+    lastIndex.current = selectedIndex;
     const left = selectedIndex * (box.clientWidth / 7);
-    if (Math.abs(box.scrollLeft - left) >= 2) box.scrollTo({ left, behavior: placed.current ? "smooth" : "auto" });
+    if (Math.abs(box.scrollLeft - left) >= 2) {
+      programmatic.current = true;
+      box.scrollTo({ left, behavior: placed.current ? "smooth" : "auto" });
+      window.clearTimeout(settleTimer.current);
+      settleTimer.current = window.setTimeout(settle, 150);
+    } else {
+      programmatic.current = false;
+    }
     placed.current = true;
+    // settle берёт свежие days и today из замыкания этого рендера; лишние зависимости только перезапускали бы подведение.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndex, today]);
 
   useEffect(() => () => window.clearTimeout(settleTimer.current), []);
 
-  // Выбор обновляем, когда прокрутка затихла, а не на каждом пикселе: иначе содержимое мигало бы под пальцем.
+  // Без throttle и debounce: событие прокрутки приходит не чаще раза за кадр, а вычисление это одно деление.
+  // setState вызывается только когда под рамку попал другой день.
   function onScroll() {
+    const box = scrollerRef.current;
+    if (!box) return;
+    if (!programmatic.current) {
+      userScroll.current = true;
+      const index = indexAtCenter(box);
+      if (index !== lastIndex.current) {
+        lastIndex.current = index;
+        onSelect(days[index] ?? today);
+      }
+    }
     window.clearTimeout(settleTimer.current);
-    settleTimer.current = window.setTimeout(() => {
-      const box = scrollerRef.current;
-      if (!box) return;
-      const index = Math.min(STRIP_PAST_DAYS, Math.max(0, Math.round(box.scrollLeft / (box.clientWidth / 7))));
-      onSelect(days[index] ?? today);
-    }, 90);
+    settleTimer.current = window.setTimeout(settle, 120);
   }
 
   return (
@@ -152,32 +231,19 @@ function DayStrip({
           ref={scrollerRef}
           aria-label="Дни"
           onScroll={onScroll}
-          // Жест начинается в полоске: листаем её, а не переключаем экраны «Сегодня» / «Сад».
-          onPointerDown={(e) => e.stopPropagation()}
+          // Жест начинается в полоске: листаем её, а не переключаем экраны «Сегодня» / «Сад». И снова слушаем палец.
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            programmatic.current = false;
+          }}
           className="relative flex touch-pan-x snap-x snap-proximity items-center overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {[0, 1, 2].map((i) => (
             <li key={`before-${i}`} aria-hidden="true" className="aspect-square w-[calc(100%/7)] shrink-0" />
           ))}
-          {days.map((key) => {
-            const plant = plants.get(key);
-            const isSelected = key === selected;
-            return (
-              <li key={key} className="aspect-square w-[calc(100%/7)] shrink-0 snap-center">
-                <button
-                  type="button"
-                  onClick={() => (isSelected ? onOpen(key) : onSelect(key))}
-                  aria-label={`${key === today ? "Сегодня, " : ""}${formatShort(key)}${plant ? ", есть запись" : ", записи нет"}`}
-                  aria-current={isSelected ? "date" : undefined}
-                  className="grid size-full place-items-center rounded-full"
-                >
-                  <span className={`grid place-items-center transition-transform duration-300 motion-reduce:transition-none ${isSelected ? "scale-125" : ""}`}>
-                    {plant ? <StripPlant plant={plant} dateKey={key} className="size-6" /> : <span className="size-1 rounded-full bg-current" />}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
+          {days.map((key) => (
+            <StripDay key={key} dayKey={key} today={today} plant={plants.get(key)} isSelected={key === selected} onSelect={onSelect} onOpen={onOpen} />
+          ))}
           {[0, 1, 2].map((i) => (
             <li key={`after-${i}`} aria-hidden="true" className="aspect-square w-[calc(100%/7)] shrink-0" />
           ))}
@@ -218,9 +284,6 @@ export function GardenApp() {
   const [planted, setPlanted] = useState<DateKey | null>(null);
   // Выбранный в полоске день. null значит «сегодня»: так выбор сам переезжает на новый день после полуночи.
   const [selectedDate, setSelectedDate] = useState<DateKey | null>(null);
-  // День, чьё содержимое сейчас на экране. Меняется с задержкой, чтобы старое успело плавно погаснуть.
-  const [shown, setShown] = useState<DateKey | null>(null);
-  const [contentVisible, setContentVisible] = useState(true);
   const toastId = useRef(0);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -280,26 +343,12 @@ export function GardenApp() {
   }, [state]);
 
   const target = selectedDate ?? today;
-  const shownDate = shown ?? target;
+  // Рамка и подсветка в полоске берут target сразу, а тяжёлое содержимое (запись, фото) следует за ним как успеет:
+  // React бросает устаревший рендер, если палец уже на другом дне, поэтому быстрый скраббинг не копит очередь.
+  const shownDate = useDeferredValue(target);
 
-  // Смена дня: старое содержимое гаснет, затем показывается новое. Первый показ без анимации.
-  useEffect(() => {
-    if (!target) return;
-    if (shown === null) {
-      setShown(target);
-      return;
-    }
-    if (shown === target) {
-      setContentVisible(true);
-      return;
-    }
-    setContentVisible(false);
-    const id = window.setTimeout(() => {
-      setShown(target);
-      setContentVisible(true);
-    }, CONTENT_FADE_MS);
-    return () => window.clearTimeout(id);
-  }, [target, shown]);
+  // Стабильный обработчик выбора: иначе memo у дней в полоске перерисовывалось бы целиком на каждый кадр.
+  const selectDay = useCallback((key: DateKey) => setSelectedDate(key === today ? null : key), [today]);
 
   // Запись показанного дня в том же виде, что и вся карта записей: её рисует MemoryFeed. Ссылка стабильна, пока запись не изменилась.
   const shownEntries = useMemo(() => {
@@ -439,15 +488,11 @@ export function GardenApp() {
                   today={today}
                   selected={selected}
                   plants={plants}
-                  onSelect={(key) => setSelectedDate(key === today ? null : key)}
+                  onSelect={selectDay}
                   onOpen={openDate}
                 />
-                {/* Содержимое выбранного дня: гаснет и появляется при смене дня */}
-                <div
-                  className={`flex min-h-0 flex-1 flex-col transition-[opacity,translate] duration-200 ease-out motion-reduce:transition-none ${
-                    contentVisible ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0"
-                  }`}
-                >
+                {/* Содержимое выбранного дня. Меняется сразу, без угасания: так работает скраббинг. Новый день чуть проявляется. */}
+                <div key={shownDay} className="flex min-h-0 flex-1 flex-col transition-opacity duration-150 starting:opacity-60 motion-reduce:transition-none">
                   {hasShownEntry ? (
                     // Запись за день: растение и сама запись. Касание растения или пустого места открывает редактор
                     // (текст, фото, удаление); карточка записи открывает его сама через onOpen.
