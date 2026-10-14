@@ -7,14 +7,46 @@ html {
 }
 
 body {
-  min-height: 100dvh;
   background: var(--bg);
   color: var(--text);
   font-family: var(--font-default);
   font-size: var(--text-base);
   line-height: var(--text-base-line);
-  /* Установленное приложение на iPhone рисует под вырезом и жестовой полосой: оставляем им место. */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Установленное приложение на iPhone рисует под вырезом и жестовой полосой. Сверху и снизу отступ делает сам экран
+     (GardenApp: pt и pb по safe-area), иначе он удваивался бы и страница получала бы лишнюю прокрутку. По бокам оставляем место. */
+  padding: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+
+/* Страница прибита к экрану: не тянется вбок, не «пружинит», не обновляется свайпом вниз.
+   Прокручиваются только внутренние контейнеры (лента, сад, запись дня): у них свой overflow-y: auto (см. GardenApp).
+   Высоту body больше не задаёт min-height: она всегда равна экрану. */
+html,
+body {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Пинч и двойной тап не масштабируют, прокрутка пальцем остаётся. Лежит в слое base, поэтому утилиты Tailwind
+   (touch-pan-x у полоски дней, touch-pan-y у переключателя экранов) сильнее и продолжают работать. */
+@layer base {
+  * {
+    touch-action: pan-x pan-y;
+  }
+}
+
+/* Скроллбары не показываем нигде, а прокрутка остаётся рабочей. */
+* {
+  -ms-overflow-style: none; /* старый Edge и IE */
+  scrollbar-width: none; /* Firefox и современный Chrome */
+}
+*::-webkit-scrollbar {
+  display: none; /* Safari и Chrome */
+  width: 0;
+  height: 0;
 }
 
 h1, h2, h3 {

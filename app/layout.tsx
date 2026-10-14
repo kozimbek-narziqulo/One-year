@@ -21,6 +21,10 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Масштаб выключен: ни щипок, ни двойной тап его не меняют. На iPhone Safari это игнорирует, там дополнительно
+  // работают touch-action в globals.css и гашение жестов в GardenApp.
+  maximumScale: 1,
+  userScalable: false,
   viewportFit: "cover",
   // Приложение сейчас только тёмное, поэтому цвет один.
   themeColor: "#02001a",

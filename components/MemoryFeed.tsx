@@ -6,6 +6,7 @@ import type { PhotoStore } from "../lib/photos.ts";
 import type { EntryMap } from "../lib/repo.ts";
 import { LIMITS, photosOf, type Entry } from "../lib/types.ts";
 import { FeedPhoto } from "./FeedPhoto.tsx";
+import { PhotoLightbox } from "./PhotoLightbox.tsx";
 import { PhotoStack, type StackPhoto } from "./PhotoStack.tsx";
 import { Button } from "./ui.tsx";
 
@@ -24,27 +25,58 @@ function EntryPhotos({ entry, store }: { entry: Entry; store: PhotoStore }) {
     [photos, entry.date, n],
   );
   const refById = useMemo(() => new Map(photos.map((p) => [p.id, p] as const)), [photos]);
+  // id фото, открытого на весь экран (null: просмотр закрыт).
+  const [lightboxId, setLightboxId] = useState<string | null>(null);
 
   if (n === 0) return null;
+
+  const lightboxPhoto = lightboxId ? stack.find((p) => p.id === lightboxId) : undefined;
+  const lightbox = lightboxPhoto ? (
+    <PhotoLightbox store={store} photoId={lightboxPhoto.id} alt={lightboxPhoto.alt ?? ""} onClose={() => setLightboxId(null)} />
+  ) : null;
+
   if (n === 1) {
-    // Одно фото показываем целиком, без обрезки под рамку полароида.
+    const only = photos[0] as (typeof photos)[number];
+    // Одно фото показываем целиком, без обрезки под рамку полароида. Тап по фото открывает его на весь экран,
+    // а не редактор: stopPropagation не пускает клик к записи. Текст и пустое место по-прежнему открывают редактор.
     return (
       <div className="mt-3">
-        <FeedPhoto store={store} photo={photos[0] as (typeof photos)[number]} alt={stack[0]?.alt ?? ""} fit="natural" />
+        <div
+          role="button"
+          tabIndex={0}
+          aria-label={`Открыть на весь экран. ${stack[0]?.alt ?? ""}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setLightboxId(only.id);
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            e.stopPropagation();
+            setLightboxId(only.id);
+          }}
+          className="cursor-zoom-in"
+        >
+          <FeedPhoto store={store} photo={only} alt={stack[0]?.alt ?? ""} fit="natural" />
+        </div>
+        {lightbox}
       </div>
     );
   }
-  // Несколько фото: стопка. Верхнее можно смахнуть, оно уйдёт в самый низ. Касание без смахивания
-  // доходит до записи выше и открывает редактор.
+  // Несколько фото: стопка. Верхнее можно смахнуть, оно уйдёт в самый низ. Тап по верхнему открывает его на весь экран.
   return (
-    <PhotoStack
-      className="mt-3"
-      photos={stack}
-      renderPhoto={(photo) => {
-        const ref = refById.get(photo.id);
-        return ref ? <FeedPhoto store={store} photo={ref} alt={photo.alt ?? ""} fit="square" /> : null;
-      }}
-    />
+    <>
+      <PhotoStack
+        className="mt-3"
+        photos={stack}
+        onPhotoOpen={setLightboxId}
+        renderPhoto={(photo) => {
+          const ref = refById.get(photo.id);
+          return ref ? <FeedPhoto store={store} photo={ref} alt={photo.alt ?? ""} fit="square" /> : null;
+        }}
+      />
+      {lightbox}
+    </>
   );
 }
 

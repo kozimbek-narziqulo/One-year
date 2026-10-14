@@ -35,16 +35,28 @@ type View = "today" | "garden" | "feed";
 
 function NavButton({ active, label, onClick, children }: { active: boolean; label: string; onClick: () => void; children: React.ReactNode }) {
   return (
+    // isolate: свой контекст наложения, чтобы плашка (z -10) лежала строго под иконкой и не уходила за кнопку.
     <button
       type="button"
       aria-label={label}
       aria-pressed={active}
       onClick={onClick}
-      className={`grid h-[4.25rem] w-[4.5rem] place-items-center rounded-2xl transition-colors duration-(--duration-fast) ${
-        active ? "bg-[#5b3dff] text-white" : "text-[#6b4dff]"
-      }`}
+      className="relative isolate grid h-[4.25rem] w-[4.5rem] place-items-center rounded-2xl"
     >
-      {children}
+      {/* Активная плашка отдельным слоем позади иконки; прозрачность вместо смены цвета фона кнопки */}
+      <span
+        aria-hidden="true"
+        className={`absolute inset-0 -z-10 rounded-2xl bg-[#5b3dff] transition-opacity duration-(--duration-fast) ${active ? "opacity-100" : "opacity-0"}`}
+      />
+      {/* Иконка поверх плашки. Цвет задан прямо на svg (!), чтобы собственный цвет иконки не слился с плашкой:
+          на активной белая, на неактивной светло-фиолетовая. */}
+      <span
+        className={`relative z-10 grid place-items-center transition-colors duration-(--duration-fast) ${
+          active ? "text-white [&_svg]:!text-white" : "text-[#9a85ff] [&_svg]:!text-[#9a85ff]"
+        }`}
+      >
+        {children}
+      </span>
     </button>
   );
 }
@@ -346,6 +358,17 @@ export function GardenApp() {
     };
   }, []);
 
+  // iPhone Safari игнорирует user-scalable=no и всё равно масштабирует щипком двумя пальцами. Эти события есть только в Safari:
+  // гасим их сами. Остальные браузеры обходятся viewport и touch-action.
+  useEffect(() => {
+    const stop = (e: Event) => e.preventDefault();
+    const types = ["gesturestart", "gesturechange", "gestureend"] as const;
+    for (const t of types) document.addEventListener(t, stop, { passive: false });
+    return () => {
+      for (const t of types) document.removeEventListener(t, stop);
+    };
+  }, []);
+
   // Раз за запуск убираем фото, на которые не ссылается ни одна запись (см. PhotoStore.sweep).
   // Состояние берём свежее, в момент уборки. Если записи не загрузились или не сохраняются, не трогаем ничего:
   // иначе фото существующих записей выглядели бы «ничьими».
@@ -526,6 +549,7 @@ export function GardenApp() {
     <>
       {/* Фон заливает экран до самого верха; под системные часы iOS подкладывается отступ safe-area, без своей строки состояния. */}
       <main className="flex h-dvh flex-col overflow-hidden bg-[#02001a] pt-[env(safe-area-inset-top)] text-[#5b3dff]">
+        {/* Нижний отступ под жестовую полосу делает навигация ниже (pb safe-area), а не body. */}
         {/* Верхняя строка: лента слева, копия и настройки справа. */}
         <header className="flex min-h-14 items-center justify-between px-(--layout-gutter)">
           {view === "feed" ? (
@@ -567,7 +591,7 @@ export function GardenApp() {
         )}
 
         {view === "feed" ? (
-          <section className="min-h-0 flex-1 overflow-y-auto px-(--layout-gutter) pb-32 text-text">
+          <section className="h-full min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-(--layout-gutter) pb-32 text-text [-webkit-overflow-scrolling:touch]">
             <h1 className="mb-1 text-xl">Лента воспоминаний</h1>
             <p className="mb-4 text-sm tabular-nums text-text-muted">Записей: {Object.keys(state.entries).length}</p>
             <MemoryFeed entries={state.entries} store={photoStore} onOpen={openDate} />
@@ -601,7 +625,7 @@ export function GardenApp() {
                     // Запись за день: растение и сама запись. Касание растения или пустого места открывает редактор
                     // (текст, фото, удаление); карточка записи открывает его сама через onOpen.
                     <div
-                      className="min-h-0 flex-1 cursor-pointer overflow-y-auto pt-4"
+                      className="min-h-0 flex-1 cursor-pointer overflow-y-auto overscroll-y-contain pt-4 [-webkit-overflow-scrolling:touch]"
                       onClick={(e) => {
                         if (e.target === e.currentTarget) openDate(shownDay);
                       }}
@@ -630,7 +654,7 @@ export function GardenApp() {
               </section>
 
               {/* Экран «Сад»: полотно точек */}
-              <section className="h-full w-1/2 overflow-y-auto px-(--layout-gutter) pb-32 pt-2" style={pageStyle(view === "garden")}>
+              <section className="h-full w-1/2 overflow-y-auto overscroll-y-contain px-(--layout-gutter) pb-32 pt-2 [-webkit-overflow-scrolling:touch]" style={pageStyle(view === "garden")}>
                 {Object.keys(state.entries).length === 0 && <p className="mb-4 text-center font-mono text-sm">Пока здесь одни семена. Начнём с сегодняшнего дня?</p>}
 
                 <GardenDots year={year} today={today} plants={plants} plantedKey={planted} onOpen={openDate} />

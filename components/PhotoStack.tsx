@@ -16,8 +16,11 @@ type Props = {
   photos: readonly StackPhoto[];
   /** Как нарисовать содержимое фотографии. Без него используется обычный <img src>. */
   renderPhoto?: (photo: StackPhoto) => ReactNode;
-  /** Касание верхней фотографии без смахивания. Событие идёт дальше вверх, так что родитель может открывать запись и сам. */
-  onOpen?: () => void;
+  /**
+   * Тап по верхней фотографии (не смахивание): родитель открывает её на весь экран. Событие дальше вверх не идёт,
+   * поэтому редактор записи от тапа по фото не открывается.
+   */
+  onPhotoOpen?: (id: string) => void;
   className?: string;
 };
 
@@ -44,7 +47,7 @@ const POSES = [
  * она улетает и пружинисто ложится в самый низ стопки, открывая следующую. Ни одна фотография не пропадает.
  * Точка под стопкой делает то же самое по нажатию, для тех, кому жест неудобен.
  */
-export const PhotoStack = memo(function PhotoStack({ photos, renderPhoto, onOpen, className = "" }: Props) {
+export const PhotoStack = memo(function PhotoStack({ photos, renderPhoto, onPhotoOpen, className = "" }: Props) {
   // Порядок фото в стопке: первое в списке лежит сверху.
   const [order, setOrder] = useState<string[]>(() => photos.map((p) => p.id));
   const [drag, setDrag] = useState({ x: 0, y: 0 });
@@ -159,15 +162,22 @@ export const PhotoStack = memo(function PhotoStack({ photos, renderPhoto, onOpen
     }
   }
 
-  function onClick(e: React.MouseEvent<HTMLDivElement>) {
-    // После перетаскивания браузер всё равно шлёт click: гасим его и не пускаем выше, иначе смахивание
-    // открывало бы редактор записи. Настоящее касание уходит в onOpen и дальше вверх по дереву.
+  function onClick(e: React.MouseEvent<HTMLElement>) {
+    // Клик по фото никогда не идёт выше: ни смахивание, ни тап не должны открывать редактор записи.
+    e.stopPropagation();
+    // После перетаскивания браузер всё равно шлёт click: просто гасим его.
     if (moved.current) {
       moved.current = false;
-      e.stopPropagation();
       return;
     }
-    onOpen?.();
+    if (topId !== undefined) onPhotoOpen?.(topId);
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLElement>) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (topId !== undefined) onPhotoOpen?.(topId);
   }
 
   return (
@@ -200,8 +210,11 @@ export const PhotoStack = memo(function PhotoStack({ photos, renderPhoto, onOpen
           return (
             <div
               key={photo.id}
-              role="img"
-              aria-label={photo.alt ?? "Фотография записи"}
+              // Верхнее фото открывается на весь экран, поэтому для клавиатуры и скринридера это кнопка; нижние лишь картинки.
+              role={isTop && onPhotoOpen ? "button" : "img"}
+              tabIndex={isTop && onPhotoOpen ? 0 : undefined}
+              onKeyDown={isTop && onPhotoOpen ? onKeyDown : undefined}
+              aria-label={isTop && onPhotoOpen ? `Открыть на весь экран. ${photo.alt ?? "Фотография записи"}` : (photo.alt ?? "Фотография записи")}
               aria-hidden={isTop ? undefined : true}
               onPointerDown={isTop ? onPointerDown : undefined}
               onPointerMove={isTop ? onPointerMove : undefined}
