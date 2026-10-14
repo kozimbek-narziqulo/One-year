@@ -9,6 +9,7 @@ import { referencedPhotoIds } from "../lib/photos.ts";
 import { shouldNudgeBackup } from "../lib/repo.ts";
 import { LIMITS, type Entry, type PlantInfo } from "../lib/types.ts";
 import { BackupPanel } from "./BackupPanel.tsx";
+import { CustomStatusBar } from "./CustomStatusBar.tsx";
 import { EntryModal } from "./EntryModal.tsx";
 import { GardenDots } from "./GardenDots.tsx";
 import { IconFlower, IconGardenGroup } from "./GardenIcons.tsx";
@@ -16,12 +17,13 @@ import { MemoryFeed } from "./MemoryFeed.tsx";
 import { MOOD_TONE } from "./MoodFlower.tsx";
 import { PlantSketch, resolveShapeId } from "./SketchUI.tsx";
 import { Toast, type ToastData } from "./Toast.tsx";
-import { Button, IconButton, IconChevronLeft, IconChevronRight, IconSettings } from "./ui.tsx";
+import { Button, IconButton, IconSettings } from "./ui.tsx";
 
-const DEFAULT_MIN_YEAR = 2000;
 // Свайп: минимум 50 px по горизонтали и заметно больше, чем по вертикали.
 const SWIPE_MIN_PX = 50;
 const SWIPE_RATIO = 1.5;
+// Сколько длится угасание старого содержимого перед показом нового (мс).
+const CONTENT_FADE_MS = 160;
 
 type View = "today" | "garden" | "feed";
 
@@ -43,8 +45,8 @@ function NavButton({ active, label, onClick, children }: { active: boolean; labe
   );
 }
 
-/** Большая кнопка «+» посередине экрана «Сегодня». */
-function PlantButton({ hasEntry, onClick }: { hasEntry: boolean; onClick: () => void }) {
+/** Большая кнопка «+» посередине экрана. Показывается, только пока за выбранный день нет записи. */
+function PlantButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -64,11 +66,10 @@ function PlantButton({ hasEntry, onClick }: { hasEntry: boolean; onClick: () => 
           focusable={false}
         >
           <path d="M47 7C27 5 8 20 8 45c0 22 20 42 42 41 22-1 38-20 37-42C86 22 68 8 47 7Z" />
-          {!hasEntry && <path d="M48 30v36M30 48h36" />}
+          <path d="M48 30v36M30 48h36" />
         </svg>
-        {hasEntry && <IconFlower className="relative size-12 text-[#9a85ff]" />}
       </span>
-      {hasEntry ? "Открыть запись" : "Посадить воспоминание"}
+      {label}
     </button>
   );
 }
@@ -78,74 +79,110 @@ const STRIP_PAST_DAYS = 90;
 const NO_MOOD_TONE = "text-[#9a85ff]";
 
 /** Растение из библиотеки в цвете настроения: так же, как в саду. */
-function StripPlant({ plant, dateKey, className }: { plant: PlantInfo; dateKey: DateKey; className: string }) {
+function StripPlant({ plant, dateKey, className, strokeWidth = 3 }: { plant: PlantInfo; dateKey: DateKey; className: string; strokeWidth?: number }) {
   return (
     <PlantSketch
       shapeId={resolveShapeId(plant.shapeId, dateKey)}
-      strokeWidth={3}
+      strokeWidth={strokeWidth}
       className={`${className} ${plant.mood != null ? MOOD_TONE[plant.mood] : NO_MOOD_TONE}`}
     />
   );
 }
 
 /**
- * Полоска дней сверху: прошедшие дни слева, сегодняшний в рамке по центру.
- * Листается пальцем по горизонтали (touch-pan-x, нативная инерция, мягкая привязка к дням).
+ * Полоска дней сверху. Листается пальцем по горизонтали (touch-pan-x, нативная инерция, мягкая привязка).
+ * День под рамкой по центру и есть выбранный: когда прокрутка успокаивается, он сообщается наружу.
+ * Тап по другому дню выбирает его и подводит к центру, тап по уже выбранному открывает редактор.
  */
-function DayStrip({ today, plants, onOpen }: { today: DateKey; plants: ReadonlyMap<string, PlantInfo>; onOpen: (key: DateKey) => void }) {
+function DayStrip({
+  today,
+  selected,
+  plants,
+  onSelect,
+  onOpen,
+}: {
+  today: DateKey;
+  selected: DateKey;
+  plants: ReadonlyMap<string, PlantInfo>;
+  onSelect: (key: DateKey) => void;
+  onOpen: (key: DateKey) => void;
+}) {
   const scrollerRef = useRef<HTMLUListElement>(null);
-  const todayRef = useRef<HTMLLIElement>(null);
-  const past = useMemo(() => Array.from({ length: STRIP_PAST_DAYS }, (_, i) => shiftKey(today, i - STRIP_PAST_DAYS)), [today]);
-  const todayPlant = plants.get(today);
+  const placed = useRef(false);
+  const settleTimer = useRef<number | undefined>(undefined);
+  // Дни от старых к новым; последний элемент (индекс STRIP_PAST_DAYS) это сегодня.
+  const days = useMemo(() => Array.from({ length: STRIP_PAST_DAYS + 1 }, (_, i) => shiftKey(today, i - STRIP_PAST_DAYS)), [today]);
+  const selectedIndex = Math.max(0, days.indexOf(selected));
 
-  // При появлении (и при смене суток) ставим «сегодня» по центру. Три пустых хвоста справа держат его там в крайнем положении.
+  // Подводим выбранный день к центру. В первый раз без анимации, дальше плавно. Три пустых элемента с каждой стороны
+  // нужны, чтобы к центру можно было подвести и самый старый день, и сегодняшний.
   useLayoutEffect(() => {
     const box = scrollerRef.current;
-    const item = todayRef.current;
-    if (!box || !item) return;
-    box.scrollLeft = item.offsetLeft - (box.clientWidth - item.offsetWidth) / 2;
-  }, [today]);
+    if (!box) return;
+    const left = selectedIndex * (box.clientWidth / 7);
+    if (Math.abs(box.scrollLeft - left) >= 2) box.scrollTo({ left, behavior: placed.current ? "smooth" : "auto" });
+    placed.current = true;
+  }, [selectedIndex, today]);
+
+  useEffect(() => () => window.clearTimeout(settleTimer.current), []);
+
+  // Выбор обновляем, когда прокрутка затихла, а не на каждом пикселе: иначе содержимое мигало бы под пальцем.
+  function onScroll() {
+    window.clearTimeout(settleTimer.current);
+    settleTimer.current = window.setTimeout(() => {
+      const box = scrollerRef.current;
+      if (!box) return;
+      const index = Math.min(STRIP_PAST_DAYS, Math.max(0, Math.round(box.scrollLeft / (box.clientWidth / 7))));
+      onSelect(days[index] ?? today);
+    }, 90);
+  }
 
   return (
     <div className="pt-4">
-      <h1 className="mb-2 text-center font-mono text-base">Сегодня</h1>
-      <ul
-        ref={scrollerRef}
-        aria-label="Последние дни"
-        // Жест начинается в полоске: листаем её, а не переключаем экраны «Сегодня» / «Сад».
-        onPointerDown={(e) => e.stopPropagation()}
-        className="relative flex touch-pan-x snap-x snap-proximity items-center overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        {past.map((key) => {
-          const plant = plants.get(key);
-          return (
-            <li key={key} className="grid w-[calc(100%/7)] shrink-0 snap-center place-items-center">
-              <button
-                type="button"
-                onClick={() => onOpen(key)}
-                aria-label={`${formatShort(key)}${plant ? ", есть запись" : ", записи нет"}`}
-                className="grid size-11 place-items-center rounded-full"
-              >
-                {plant ? <StripPlant plant={plant} dateKey={key} className="size-6" /> : <span className="size-1 rounded-full bg-current" />}
-              </button>
-            </li>
-          );
-        })}
-        <li ref={todayRef} className="grid w-[calc(100%/7)] shrink-0 snap-center place-items-center">
-          <button
-            type="button"
-            onClick={() => onOpen(today)}
-            aria-label={`Сегодня, ${formatShort(today)}${todayPlant ? ", есть запись" : ", записи нет"}`}
-            aria-current="date"
-            className="grid aspect-square w-[88%] place-items-center rounded-[1.4rem] border border-[#5b3dff]/40 bg-[#5b3dff]/15"
-          >
-            {todayPlant ? <StripPlant plant={todayPlant} dateKey={today} className="size-7" /> : <span className="size-1 rounded-full bg-current" />}
-          </button>
-        </li>
-        {[0, 1, 2].map((i) => (
-          <li key={i} aria-hidden="true" className="w-[calc(100%/7)] shrink-0" />
-        ))}
-      </ul>
+      <h1 className="mb-2 text-center font-mono text-base" aria-live="polite">
+        {selected === today ? "Сегодня" : formatShort(selected)}
+      </h1>
+      <div className="relative">
+        {/* Неподвижная рамка по центру: дни проезжают под ней */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1/2 top-1/2 aspect-square w-[calc(100%/7*0.88)] -translate-x-1/2 -translate-y-1/2 rounded-[1.4rem] border border-[#5b3dff]/40 bg-[#5b3dff]/15"
+        />
+        <ul
+          ref={scrollerRef}
+          aria-label="Дни"
+          onScroll={onScroll}
+          // Жест начинается в полоске: листаем её, а не переключаем экраны «Сегодня» / «Сад».
+          onPointerDown={(e) => e.stopPropagation()}
+          className="relative flex touch-pan-x snap-x snap-proximity items-center overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
+          {[0, 1, 2].map((i) => (
+            <li key={`before-${i}`} aria-hidden="true" className="aspect-square w-[calc(100%/7)] shrink-0" />
+          ))}
+          {days.map((key) => {
+            const plant = plants.get(key);
+            const isSelected = key === selected;
+            return (
+              <li key={key} className="aspect-square w-[calc(100%/7)] shrink-0 snap-center">
+                <button
+                  type="button"
+                  onClick={() => (isSelected ? onOpen(key) : onSelect(key))}
+                  aria-label={`${key === today ? "Сегодня, " : ""}${formatShort(key)}${plant ? ", есть запись" : ", записи нет"}`}
+                  aria-current={isSelected ? "date" : undefined}
+                  className="grid size-full place-items-center rounded-full"
+                >
+                  <span className={`grid place-items-center transition-transform duration-300 motion-reduce:transition-none ${isSelected ? "scale-125" : ""}`}>
+                    {plant ? <StripPlant plant={plant} dateKey={key} className="size-6" /> : <span className="size-1 rounded-full bg-current" />}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+          {[0, 1, 2].map((i) => (
+            <li key={`after-${i}`} aria-hidden="true" className="aspect-square w-[calc(100%/7)] shrink-0" />
+          ))}
+        </ul>
+      </div>
     </div>
   );
 }
@@ -179,6 +216,11 @@ export function GardenApp() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [toast, setToast] = useState<ToastData | null>(null);
   const [planted, setPlanted] = useState<DateKey | null>(null);
+  // Выбранный в полоске день. null значит «сегодня»: так выбор сам переезжает на новый день после полуночи.
+  const [selectedDate, setSelectedDate] = useState<DateKey | null>(null);
+  // День, чьё содержимое сейчас на экране. Меняется с задержкой, чтобы старое успело плавно погаснуть.
+  const [shown, setShown] = useState<DateKey | null>(null);
+  const [contentVisible, setContentVisible] = useState(true);
   const toastId = useRef(0);
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
 
@@ -237,12 +279,34 @@ export function GardenApp() {
     return map;
   }, [state]);
 
-  // Самый ранний год, до которого можно дойти: не раньше самой старой записи (например, из импортированной копии).
-  const minYear = useMemo(() => {
-    let min = DEFAULT_MIN_YEAR;
-    if (state) for (const k of Object.keys(state.entries)) min = Math.min(min, yearOf(k));
-    return min;
-  }, [state]);
+  const target = selectedDate ?? today;
+  const shownDate = shown ?? target;
+
+  // Смена дня: старое содержимое гаснет, затем показывается новое. Первый показ без анимации.
+  useEffect(() => {
+    if (!target) return;
+    if (shown === null) {
+      setShown(target);
+      return;
+    }
+    if (shown === target) {
+      setContentVisible(true);
+      return;
+    }
+    setContentVisible(false);
+    const id = window.setTimeout(() => {
+      setShown(target);
+      setContentVisible(true);
+    }, CONTENT_FADE_MS);
+    return () => window.clearTimeout(id);
+  }, [target, shown]);
+
+  // Запись показанного дня в том же виде, что и вся карта записей: её рисует MemoryFeed. Ссылка стабильна, пока запись не изменилась.
+  const shownEntries = useMemo(() => {
+    if (!state || !shownDate) return null;
+    const e = state.entries[shownDate];
+    return e ? ({ [shownDate]: e } as typeof state.entries) : null;
+  }, [state, shownDate]);
 
   const entryCountThisYear = useMemo(() => {
     if (!state || year === null) return 0;
@@ -252,11 +316,13 @@ export function GardenApp() {
 
   if (!state || !repo || !photoStore || !today || year === null) return <Skeleton />;
 
-  const thisYear = yearOf(today);
   const elapsed = daysElapsed(year, today);
   const total = daysInYear(year);
   const nudge = shouldNudgeBackup(state, Date.now());
-  const todayHasEntry = plants.has(today);
+  const selected = target ?? today;
+  const shownDay = shownDate ?? today;
+  const shownPlant = plants.get(shownDay);
+  const hasShownEntry = shownEntries !== null && shownPlant !== undefined;
 
   function onSaved(entry: Entry, wasNew: boolean) {
     setModalDate(null);
@@ -305,8 +371,9 @@ export function GardenApp() {
   return (
     <>
       <main className="flex h-dvh flex-col bg-[#02001a] text-[#5b3dff]">
-        {/* Верхняя строка: лента слева, копия и настройки справа */}
-        <header className="flex min-h-14 items-center justify-between px-(--layout-gutter) pt-[env(safe-area-inset-top)]">
+        <CustomStatusBar />
+        {/* Верхняя строка: лента слева, копия и настройки справа. Отступ под «чёлку» теперь делает CustomStatusBar. */}
+        <header className="flex min-h-14 items-center justify-between px-(--layout-gutter)">
           {view === "feed" ? (
             <Button variant="ghost" onClick={() => setView("today")}>
               Назад
@@ -368,26 +435,53 @@ export function GardenApp() {
             >
               {/* Экран «Сегодня» */}
               <section className="flex h-full w-1/2 flex-col px-(--layout-gutter) pb-32" style={pageStyle(view === "today")}>
-                <DayStrip today={today} plants={plants} onOpen={openDate} />
-                <div className="grid flex-1 place-items-center">
-                  <PlantButton hasEntry={todayHasEntry} onClick={() => openDate(today)} />
+                <DayStrip
+                  today={today}
+                  selected={selected}
+                  plants={plants}
+                  onSelect={(key) => setSelectedDate(key === today ? null : key)}
+                  onOpen={openDate}
+                />
+                {/* Содержимое выбранного дня: гаснет и появляется при смене дня */}
+                <div
+                  className={`flex min-h-0 flex-1 flex-col transition-[opacity,translate] duration-200 ease-out motion-reduce:transition-none ${
+                    contentVisible ? "translate-y-0 opacity-100" : "pointer-events-none translate-y-2 opacity-0"
+                  }`}
+                >
+                  {hasShownEntry ? (
+                    // Запись за день: растение и сама запись. Касание растения или пустого места открывает редактор
+                    // (текст, фото, удаление); карточка записи открывает его сама через onOpen.
+                    <div
+                      className="min-h-0 flex-1 cursor-pointer overflow-y-auto pt-4"
+                      onClick={(e) => {
+                        if (e.target === e.currentTarget) openDate(shownDay);
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => openDate(shownDay)}
+                        aria-label={shownDay === today ? "Изменить запись за сегодня" : `Изменить запись за ${formatShort(shownDay)}`}
+                        className="mx-auto mb-4 grid size-36 place-items-center rounded-full transition-transform duration-(--duration-fast) active:scale-95"
+                      >
+                        <StripPlant
+                          plant={shownPlant}
+                          dateKey={shownDay}
+                          strokeWidth={2.4}
+                          className={`size-28 ${planted === shownDay ? "animate-pulse" : ""}`}
+                        />
+                      </button>
+                      <MemoryFeed entries={shownEntries} store={photoStore} onOpen={openDate} />
+                    </div>
+                  ) : (
+                    <div className="grid flex-1 place-items-center">
+                      <PlantButton label={shownDay === today ? "Посадить воспоминание" : `Записать ${formatShort(shownDay)}`} onClick={() => openDate(shownDay)} />
+                    </div>
+                  )}
                 </div>
               </section>
 
               {/* Экран «Сад»: полотно точек */}
-              <section className="h-full w-1/2 overflow-y-auto px-(--layout-gutter) pb-32" style={pageStyle(view === "garden")}>
-                <div className="flex items-center justify-center gap-2 pb-5 pt-2">
-                  <IconButton label="Предыдущий год" disabled={year <= minYear} onClick={() => setViewYear(year - 1)}>
-                    <IconChevronLeft />
-                  </IconButton>
-                  <h1 className="rounded-full bg-[#5b3dff] px-8 py-2 font-mono text-xl tabular-nums text-white" aria-live="polite">
-                    {year}
-                  </h1>
-                  <IconButton label="Следующий год" disabled={year >= thisYear} onClick={() => setViewYear(year + 1)}>
-                    <IconChevronRight />
-                  </IconButton>
-                </div>
-
+              <section className="h-full w-1/2 overflow-y-auto px-(--layout-gutter) pb-32 pt-2" style={pageStyle(view === "garden")}>
                 {Object.keys(state.entries).length === 0 && <p className="mb-4 text-center font-mono text-sm">Пока здесь одни семена. Начнём с сегодняшнего дня?</p>}
 
                 <GardenDots year={year} today={today} plants={plants} plantedKey={planted} onOpen={openDate} />

@@ -6,6 +6,7 @@ import type { PhotoStore } from "../lib/photos.ts";
 import type { EntryMap } from "../lib/repo.ts";
 import { LIMITS, MOOD_VALUES, photosOf, type Entry } from "../lib/types.ts";
 import { FeedPhoto } from "./FeedPhoto.tsx";
+import { PhotoStack, type StackPhoto } from "./PhotoStack.tsx";
 import { Button } from "./ui.tsx";
 
 export interface MemoryFeedProps {
@@ -14,28 +15,36 @@ export interface MemoryFeedProps {
   onOpen: (date: DateKey) => void;
 }
 
-function EntryPhotos({ entry, store }: { entry: Entry; store: PhotoStore }) {
-  const photos = photosOf(entry);
+function EntryPhotos({ entry, store, onOpen }: { entry: Entry; store: PhotoStore; onOpen: (date: DateKey) => void }) {
+  const photos = useMemo(() => photosOf(entry), [entry]);
   const n = photos.length;
+  // Для стопки: id и подпись каждой фотографии. Саму картинку загружает FeedPhoto по ссылке из хранилища.
+  const stack = useMemo<StackPhoto[]>(
+    () => photos.map((p, i) => ({ id: p.id, alt: `Фото к записи за ${formatShort(entry.date)}, ${i + 1} из ${n}` })),
+    [photos, entry.date, n],
+  );
+  const refById = useMemo(() => new Map(photos.map((p) => [p.id, p] as const)), [photos]);
+
   if (n === 0) return null;
-  const alt = (i: number) => `Фото к записи за ${formatShort(entry.date)}, ${i + 1} из ${n}`;
   if (n === 1) {
+    // Одно фото показываем целиком, без обрезки под рамку полароида.
     return (
       <div className="mt-3">
-        <FeedPhoto store={store} photo={photos[0] as (typeof photos)[number]} alt={alt(0)} fit="natural" />
+        <FeedPhoto store={store} photo={photos[0] as (typeof photos)[number]} alt={stack[0]?.alt ?? ""} fit="natural" />
       </div>
     );
   }
-  // Две колонки; при нечётном числе первое фото занимает обе, чтобы не оставалось дыры.
-  const wideFirst = n % 2 === 1;
+  // Несколько фото: стопка. Верхнее можно смахнуть, оно уйдёт в самый низ. Касание без смахивания открывает редактор.
   return (
-    <ul className="mt-3 grid grid-cols-2 gap-1">
-      {photos.map((p, i) => (
-        <li key={p.id} className={wideFirst && i === 0 ? "col-span-2" : undefined}>
-          <FeedPhoto store={store} photo={p} alt={alt(i)} fit={wideFirst && i === 0 ? "wide" : "square"} />
-        </li>
-      ))}
-    </ul>
+    <PhotoStack
+      className="mt-3"
+      photos={stack}
+      onOpen={() => onOpen(entry.date)}
+      renderPhoto={(photo) => {
+        const ref = refById.get(photo.id);
+        return ref ? <FeedPhoto store={store} photo={ref} alt={photo.alt ?? ""} fit="square" /> : null;
+      }}
+    />
   );
 }
 
@@ -75,7 +84,7 @@ export function MemoryFeed({ entries, store, onOpen }: MemoryFeedProps) {
                   </p>
                 )}
                 {entry.body !== "" && <p className="mt-2 whitespace-pre-wrap break-words font-entry text-entry text-text">{entry.body}</p>}
-                <EntryPhotos entry={entry} store={store} />
+                <EntryPhotos entry={entry} store={store} onOpen={onOpen} />
               </article>
             </li>
           );
