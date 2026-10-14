@@ -102,6 +102,8 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   const existingRef = useRef(existing);
   existingRef.current = existing;
   const closedBySave = useRef(false);
+  /** Запись или черновик загружены в форму: можно ставить курсор в конец текста. */
+  const [opened, setOpened] = useState(false);
 
   const picker = usePhotoPicker({
     items: form.photos,
@@ -148,7 +150,10 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     if (!dlg) return;
     load(initialDate);
     if (!dlg.open) dlg.showModal();
-    requestAnimationFrame(() => textRef.current?.focus());
+    // Фокус сразу, в том же вызове, что и открытие по касанию: так на телефоне поднимается клавиатура.
+    // Курсор в конец текста ставит эффект ниже, когда загруженный текст уже лежит в поле.
+    textRef.current?.focus();
+    setOpened(true);
     return () => {
       if (dlg.open) dlg.close();
     };
@@ -215,6 +220,19 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   }, [form.body]);
+
+  // Умный автофокус при открытии: поле в фокусе, курсор в самом конце текста, чтобы сразу продолжать писать.
+  // Стоит после эффекта автовысоты: к этому моменту поле уже выросло под загруженный текст.
+  useEffect(() => {
+    if (!opened) return;
+    const el = textRef.current;
+    if (!el) return;
+    el.focus();
+    const end = el.value.length;
+    el.setSelectionRange(end, end);
+    // Длинный текст: показываем конец, где стоит курсор.
+    el.scrollIntoView({ block: "nearest" });
+  }, [opened]);
 
   function changeDate(next: string) {
     if (!isValidKey(next)) return;

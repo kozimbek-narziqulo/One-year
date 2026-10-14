@@ -16,7 +16,7 @@ type Props = {
   photos: readonly StackPhoto[];
   /** Как нарисовать содержимое фотографии. Без него используется обычный <img src>. */
   renderPhoto?: (photo: StackPhoto) => ReactNode;
-  /** Касание верхней фотографии без смахивания, например открыть редактор записи. */
+  /** Касание верхней фотографии без смахивания. Событие идёт дальше вверх, так что родитель может открывать запись и сам. */
   onOpen?: () => void;
   className?: string;
 };
@@ -123,10 +123,12 @@ export const PhotoStack = memo(function PhotoStack({ photos, renderPhoto, onOpen
     }
   }
 
-  function onClick() {
-    // После перетаскивания браузер всё равно шлёт click: его гасим, настоящее касание отдаём наружу.
+  function onClick(e: React.MouseEvent<HTMLDivElement>) {
+    // После перетаскивания браузер всё равно шлёт click: гасим его и не пускаем выше, иначе смахивание
+    // открывало бы редактор записи. Настоящее касание уходит в onOpen и дальше вверх по дереву.
     if (moved.current) {
       moved.current = false;
+      e.stopPropagation();
       return;
     }
     onOpen?.();
@@ -197,7 +199,11 @@ export const PhotoStack = memo(function PhotoStack({ photos, renderPhoto, onOpen
       {count > 1 && (
         <button
           type="button"
-          onClick={() => fly(-1)}
+          onClick={(e) => {
+            // Точки листают стопку, а не открывают запись, внутри которой лежат.
+            e.stopPropagation();
+            fly(-1);
+          }}
           aria-label={`Следующее фото, сейчас ${currentIndex + 1} из ${photos.length}`}
           className="mx-auto flex items-center gap-2 rounded-full p-3 font-mono text-xs text-[#6b4dff]"
         >

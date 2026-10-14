@@ -15,7 +15,7 @@ export interface MemoryFeedProps {
   onOpen: (date: DateKey) => void;
 }
 
-function EntryPhotos({ entry, store, onOpen }: { entry: Entry; store: PhotoStore; onOpen: (date: DateKey) => void }) {
+function EntryPhotos({ entry, store }: { entry: Entry; store: PhotoStore }) {
   const photos = useMemo(() => photosOf(entry), [entry]);
   const n = photos.length;
   // Для стопки: id и подпись каждой фотографии. Саму картинку загружает FeedPhoto по ссылке из хранилища.
@@ -34,12 +34,12 @@ function EntryPhotos({ entry, store, onOpen }: { entry: Entry; store: PhotoStore
       </div>
     );
   }
-  // Несколько фото: стопка. Верхнее можно смахнуть, оно уйдёт в самый низ. Касание без смахивания открывает редактор.
+  // Несколько фото: стопка. Верхнее можно смахнуть, оно уйдёт в самый низ. Касание без смахивания
+  // доходит до записи выше и открывает редактор.
   return (
     <PhotoStack
       className="mt-3"
       photos={stack}
-      onOpen={() => onOpen(entry.date)}
       renderPhoto={(photo) => {
         const ref = refById.get(photo.id);
         return ref ? <FeedPhoto store={store} photo={ref} alt={photo.alt ?? ""} fit="square" /> : null;
@@ -59,24 +59,29 @@ export function MemoryFeed({ entries, store, onOpen }: MemoryFeedProps) {
   const shown = list.slice(0, limit);
   return (
     <div>
-      <ol className="space-y-4">
+      <ol className="space-y-8">
         {shown.map((entry, i) => {
           const year = yearOf(entry.date);
           const newYear = i === 0 || yearOf((shown[i - 1] as Entry).date) !== year;
           return (
             <li key={entry.date}>
               {newYear && <h2 className="mb-2 mt-2 text-lg tabular-nums text-text-muted">{year}</h2>}
-              <article className="rounded-md border border-border bg-surface p-4">
-                <header className="flex items-baseline justify-between gap-2">
-                  <h3 className="text-base first-letter:uppercase text-text">{formatLong(entry.date)}</h3>
-                  <button
-                    type="button"
-                    onClick={() => onOpen(entry.date)}
-                    aria-label={`Изменить запись за ${formatShort(entry.date)}`}
-                    className="min-h-(--layout-tapMin) rounded-sm px-1 text-sm text-accent underline"
-                  >
-                    Изменить
-                  </button>
+              {/* Запись лежит прямо на фоне приложения: без рамки, подложки и отступов. Вся область записи открывает редактор. */}
+              <article
+                onClick={() => {
+                  // Если человек выделял текст, это не касание «открыть».
+                  if (window.getSelection()?.toString()) return;
+                  onOpen(entry.date);
+                }}
+                className="cursor-pointer [-webkit-tap-highlight-color:transparent] transition-opacity duration-(--duration-fast) active:opacity-80"
+              >
+                <header>
+                  {/* Дата это и есть кнопка для клавиатуры и скринридера; касание мышью или пальцем ловит вся запись */}
+                  <h3 className="text-base first-letter:uppercase text-text">
+                    <button type="button" aria-label={`Изменить запись за ${formatShort(entry.date)}`} className="text-left">
+                      {formatLong(entry.date)}
+                    </button>
+                  </h3>
                 </header>
                 {entry.mood !== null && (
                   <p className="text-sm text-text-muted">
@@ -84,7 +89,7 @@ export function MemoryFeed({ entries, store, onOpen }: MemoryFeedProps) {
                   </p>
                 )}
                 {entry.body !== "" && <p className="mt-2 whitespace-pre-wrap break-words font-entry text-entry text-text">{entry.body}</p>}
-                <EntryPhotos entry={entry} store={store} onOpen={onOpen} />
+                <EntryPhotos entry={entry} store={store} />
               </article>
             </li>
           );
