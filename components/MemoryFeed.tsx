@@ -1,21 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { compareKeys, formatShort, type DateKey } from "../lib/date.ts";
-import { itemsOf, saveEntryWithPhotos, type PhotoItem } from "../lib/entryPhotos.ts";
+import { itemsOf, saveEntryWithPhotos } from "../lib/entryPhotos.ts";
 import type { PhotoStore } from "../lib/photos.ts";
 import type { EntryMap, Repo } from "../lib/repo.ts";
 import { GardenError, LIMITS, photosOf, type Entry } from "../lib/types.ts";
-import { CustomCamera } from "./CustomCamera.tsx";
 import { FeedPhoto } from "./FeedPhoto.tsx";
 import { PhotoLightbox } from "./PhotoLightbox.tsx";
 import { PhotoStack, type StackPhoto } from "./PhotoStack.tsx";
-import { usePhotoPicker } from "./PhotoStrip.tsx";
-import { SketchDefs, SketchIconButton, resolveShapeId } from "./SketchUI.tsx";
+import { resolveShapeId } from "./SketchUI.tsx";
 import { Button } from "./ui.tsx";
-
-const APP_BG = "#02001a";
 
 export interface MemoryFeedProps {
   entries: EntryMap;
@@ -24,13 +19,18 @@ export interface MemoryFeedProps {
   onOpen: (date: DateKey) => void;
 }
 
+/** Сколько надо держать палец на фото, чтобы появилось «Удалить». */
+const LONG_PRESS_MS = 500;
+/** Если палец сдвинулся дальше этого, это прокрутка или свайп, а не долгое нажатие. */
+const MOVE_TOLERANCE_PX = 10;
+
 function photoErrorText(e: unknown): string {
   if (e instanceof GardenError) {
-    if (e.code === "quota") return "Не удалось сохранить фото: на телефоне кончилось место.";
-    if (e.code === "unavailable") return "Не удалось записать фото в хранилище браузера.";
+    if (e.code === "quota") return "Не удалось сохранить изменения: на телефоне кончилось место.";
+    if (e.code === "unavailable") return "Не удалось записать изменения в хранилище браузера.";
     return e.message;
   }
-  return "Не удалось сохранить фото.";
+  return "Не удалось удалить фото.";
 }
 
 /** Гасит касания и клики, чтобы они не доходили до записи (редактор) и до экрана (свайп «Сегодня» / «Сад»). */
@@ -40,113 +40,215 @@ const stop = {
 };
 
 /**
- * Фото записи прямо в ленте: стопка 3:4 и кнопки «галерея» / «камера».
- * Каждое изменение (добавили, удалили) сразу сохраняется в запись, без редактора.
+ * Обёртка одной фотографии с долгим нажатием.
+ * Тап проходит выше и открывает лайтбокс. Удержание ~500 мс показывает поверх фото кнопку «Удалить».
+ * Клик, которым закончилось удержание, гасится здесь, чтобы лайтбокс не открылся следом.
+ */
+function LongPressPhoto({
+  armed,
+  disabled,
+  onArm,
+  onDisarm,
+  onDelete,
+  children,
+}: {
+  armed: boolean;
+  disabled: boolean;
+  onArm: () => void;
+  onDisarm: () => void;
+  onDelete: () => void;
+  children: ReactNode;
+}) {
+  const timer = useRef<number | undefined>(undefined);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  /** Удержание сработало: ближайший click нужно проглотить. */
+  const fired = useRef(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const clear = () => {
+    if (timer.current !== undefined) window.clearTimeout(timer.current);
+    timer.current = undefined;
+    start.current = null;
+  };
+
+  const begin = (x: number, y: number) => {
+    if (disabled || armed) return;
+    fired.current = false;
+    start.current = { x, y };
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      fired.current = true;
+      if ("vibrate" in navigator) navigator.vibrate?.(15);
+      onArm();
+    }, LONG_PRESS_MS);
+  };
+
+  const move = (x: number, y: number) => {
+    const s = start.current;
+    if (!s) return;
+    if (Math.abs(x - s.x) > MOVE_TOLERANCE_PX || Math.abs(y - s.y) > MOVE_TOLERANCE_PX) clear();
+  };
+
+  useEffect(() => clear, []);
+
+  // Пока кнопка «Удалить» показана, любое касание вне фото её прячет.
+  useEffect(() => {
+    if (!armed) return;
+    const onDown = (e: Event) => {
+      if (rootRef.current && e.target instanceof Node && rootRef.current.contains(e.target)) return;
+      onDisarm();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [armed, onDisarm]);
+
+  return (
+    <div
+      ref={rootRef}
+      className="relative size-full select-none [-webkit-touch-callout:none]"
+      onTouchStart={(e) => {
+        const t = e.touches[0];
+        if (t) begin(t.clientX, t.clientY);
+      }}
+      onTouchMove={(e) => {
+        const t = e.touches[0];
+        if (t) move(t.clientX, t.clientY);
+      }}
+      onTouchEnd={clear}
+      onTouchCancel={clear}
+      // Мышь на компьютере: то же удержание. Касания сюда не попадают, у них свои обработчики выше.
+      onPointerDown={(e) => {
+        if (e.pointerType === "mouse" && e.button === 0) begin(e.clientX, e.clientY);
+      }}
+      onPointerMove={(e) => {
+        if (e.pointerType === "mouse") move(e.clientX, e.clientY);
+      }}
+      onPointerUp={(e) => {
+        if (e.pointerType === "mouse") clear();
+      }}
+      onPointerLeave={(e) => {
+        if (e.pointerType === "mouse") clear();
+      }}
+      // iPhone показывает меню «Сохранить фото» при удержании: отключаем.
+      onContextMenu={(e) => e.preventDefault()}
+      // Захват клика: если удерживали или кнопка «Удалить» уже показана, лайтбокс не открываем.
+      onClickCapture={(e) => {
+        if (fired.current) {
+          fired.current = false;
+          e.stopPropagation();
+          e.preventDefault();
+          return;
+        }
+        if (armed) {
+          // Тап по самому фото при открытой кнопке просто прячет её.
+          const onButton = e.target instanceof Element && e.target.closest("[data-delete-photo]");
+          if (!onButton) {
+            e.stopPropagation();
+            e.preventDefault();
+            onDisarm();
+          }
+        }
+      }}
+    >
+      <div className={armed ? "size-full opacity-50 transition-opacity duration-(--duration-fast)" : "size-full transition-opacity duration-(--duration-fast)"}>{children}</div>
+      {armed && (
+        <button
+          type="button"
+          data-delete-photo
+          aria-label="Удалить фото"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onDelete();
+          }}
+          className="absolute left-1/2 top-1/2 flex min-h-(--layout-tapMin) -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-full bg-black/80 px-5 text-lg text-white active:scale-95"
+        >
+          <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" aria-hidden="true" focusable={false}>
+            <path d="M5 5.2c3.3 3.2 6.6 6.3 10 9.6M14.8 5c-3.2 3.4-6.4 6.7-9.6 10" />
+          </svg>
+          Удалить
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Фото записи в ленте: стопка 3:4, только просмотр.
+ * Тап открывает полноэкранный просмотр, долгое нажатие показывает «Удалить».
+ * Кнопок добавления и постоянных крестиков здесь нет: добавлять фото можно в редакторе.
  */
 function EntryPhotos({ entry, repo, store }: { entry: Entry; repo: Repo; store: PhotoStore }) {
-  const saved = useMemo(() => itemsOf(entry), [entry]);
-  const savedRef = useRef(saved);
-  savedRef.current = saved;
-  const refById = useMemo(() => new Map(photosOf(entry).map((p) => [p.id, p] as const)), [entry]);
-
-  /** Изменения, которые ещё не записаны. null: показываем то, что уже лежит в записи. */
-  const [pending, setPending] = useState<readonly PhotoItem[] | null>(null);
+  const photos = useMemo(() => photosOf(entry), [entry]);
+  const refById = useMemo(() => new Map(photos.map((p) => [p.id, p] as const)), [photos]);
+  const [lightboxId, setLightboxId] = useState<string | null>(null);
+  const [armedId, setArmedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cameraOpen, setCameraOpen] = useState(false);
-  const [lightboxId, setLightboxId] = useState<string | null>(null);
-  const items = pending ?? saved;
 
-  const picker = usePhotoPicker({
-    items,
-    onChange: (update) => {
-      setError(null);
-      setPending((p) => update(p ?? savedRef.current));
-    },
-    onError: setError,
-  });
-
-  // Как только фото обработаны, сохраняем запись целиком. Пока идёт сохранение, новые изменения ждут.
-  useEffect(() => {
-    if (pending === null || saving || picker.busy > 0) return;
-    setSaving(true);
-    const latest = repo.getEntry(entry.date) ?? entry;
-    saveEntryWithPhotos(repo, store, {
-      date: entry.date,
-      body: latest.body,
-      mood: latest.mood,
-      shapeId: resolveShapeId(latest.shapeId, entry.date),
-      items: pending,
-    })
-      .then(
-        () => setPending(null),
-        (e: unknown) => {
-          setError(photoErrorText(e));
-          setPending(null);
-        },
-      )
-      .finally(() => setSaving(false));
-  }, [pending, saving, picker.busy, repo, store, entry]);
-
-  // В стопке только уже сохранённые фото: новые появятся сразу после записи (это доли секунды).
-  const visible = useMemo(() => items.filter((p) => p.kind !== "new" && refById.has(p.ref.id)), [items, refById]);
-  const n = visible.length;
+  const n = photos.length;
   const stack = useMemo<StackPhoto[]>(
-    () => visible.map((p, i) => ({ id: p.ref.id, alt: `Фото к записи за ${formatShort(entry.date)}${n > 1 ? `, ${i + 1} из ${n}` : ""}` })),
-    [visible, entry.date, n],
+    () => photos.map((p, i) => ({ id: p.id, alt: `Фото к записи за ${formatShort(entry.date)}${n > 1 ? `, ${i + 1} из ${n}` : ""}` })),
+    [photos, entry.date, n],
   );
-
-  const busy = saving || picker.busy > 0;
-  const canAdd = store.available && !busy && picker.room > 0;
   const lightboxPhoto = lightboxId ? stack.find((p) => p.id === lightboxId) : undefined;
 
-  function removePhoto(id: string) {
-    if (busy) return;
-    if (lightboxId === id) setLightboxId(null);
+  // Если выделенное фото исчезло (удалили или запись обновилась), кнопку прячем.
+  useEffect(() => {
+    if (armedId && !refById.has(armedId)) setArmedId(null);
+  }, [armedId, refById]);
+
+  async function removePhoto(id: string) {
+    if (saving) return;
+    setSaving(true);
     setError(null);
-    setPending((p) => (p ?? savedRef.current).filter((item) => item.ref.id !== id));
+    setArmedId(null);
+    try {
+      // Берём свежую запись из хранилища и переписываем её без этой фотографии.
+      const latest = repo.getEntry(entry.date) ?? entry;
+      await saveEntryWithPhotos(repo, store, {
+        date: entry.date,
+        body: latest.body,
+        mood: latest.mood,
+        shapeId: resolveShapeId(latest.shapeId, entry.date),
+        items: itemsOf(latest).filter((item) => item.ref.id !== id),
+      });
+    } catch (e) {
+      setError(photoErrorText(e));
+    } finally {
+      setSaving(false);
+    }
   }
+
+  if (n === 0) return null;
 
   return (
     <>
-      {/* Кнопки добавления фото под текстом. Касание здесь не открывает редактор. */}
-      {store.available && (
-        <div className="mt-3 flex items-center gap-3" {...stop}>
-          <SketchDefs />
-          {picker.room > 0 && (
-            <>
-              <SketchIconButton icon="gallery" label="Добавить фото из галереи" onClick={picker.openGallery} disabled={!canAdd} />
-              <SketchIconButton icon="camera" label="Сделать фото" onClick={() => setCameraOpen(true)} disabled={!canAdd} />
-            </>
-          )}
-          {n > 0 && (
-            <span className="font-mono text-sm tabular-nums text-[#6c67d6]" aria-label={`Фото: ${n} из ${picker.max}`}>
-              {n}/{picker.max}
-            </span>
-          )}
-          {busy && <span className="font-mono text-sm text-[#6c67d6]">сохраняю…</span>}
-          {/* Скрытые поля выбора файлов. Внутри обёртки со stopPropagation: их click не дойдёт до записи. */}
-          {picker.inputs}
-        </div>
-      )}
+      <PhotoStack
+        className="mt-3"
+        photos={stack}
+        onPhotoOpen={setLightboxId}
+        renderPhoto={(photo) => {
+          const ref = refById.get(photo.id);
+          if (!ref) return null;
+          return (
+            <LongPressPhoto
+              armed={armedId === photo.id}
+              disabled={saving}
+              onArm={() => setArmedId(photo.id)}
+              onDisarm={() => setArmedId((cur) => (cur === photo.id ? null : cur))}
+              onDelete={() => void removePhoto(photo.id)}
+            >
+              <FeedPhoto store={store} photo={ref} alt={photo.alt ?? ""} fit="square" />
+            </LongPressPhoto>
+          );
+        }}
+      />
 
       {error && (
         <p role="alert" className="mt-2 text-sm text-danger" {...stop}>
           {error}
         </p>
-      )}
-
-      {n > 0 && (
-        <PhotoStack
-          className="mt-1"
-          photos={stack}
-          onPhotoOpen={setLightboxId}
-          onPhotoRemove={busy ? undefined : removePhoto}
-          renderPhoto={(photo) => {
-            const ref = refById.get(photo.id);
-            return ref ? <FeedPhoto store={store} photo={ref} alt={photo.alt ?? ""} fit="square" /> : null;
-          }}
-        />
       )}
 
       {lightboxPhoto && (
@@ -155,24 +257,8 @@ function EntryPhotos({ entry, repo, store }: { entry: Entry; repo: Repo; store: 
         </div>
       )}
 
-      {/* Камера поверх всего экрана. Через портал: экраны «Сегодня» / «Сад» сдвигаются transform-ом,
-          и fixed внутри них считался бы от сдвинутого блока, а не от экрана. */}
-      {cameraOpen &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div className="fixed inset-0 z-[100]" style={{ backgroundColor: APP_BG }} {...stop}>
-            <CustomCamera
-              onCapture={(file) => {
-                void picker.addFiles([file]);
-              }}
-              onClose={() => setCameraOpen(false)}
-            />
-          </div>,
-          document.body,
-        )}
-
       <p role="status" className="sr-only">
-        {busy ? "Сохраняю фото…" : ""}
+        {saving ? "Удаляю фото…" : ""}
       </p>
     </>
   );
@@ -195,7 +281,7 @@ export function MemoryFeed({ entries, repo, store, onOpen }: MemoryFeedProps) {
             {/* Запись лежит прямо на фоне приложения: только текст и фото, без рамок, подложек и выделений. */}
             <article className="[-webkit-tap-highlight-color:transparent]">
               {entry.body !== "" ? (
-                // Тап по тексту открывает чистый редактор текста.
+                // Тап по тексту открывает редактор.
                 <p
                   onClick={() => {
                     // Если человек выделял текст, это не касание «открыть».
@@ -213,7 +299,7 @@ export function MemoryFeed({ entries, repo, store, onOpen }: MemoryFeedProps) {
               )}
               {/* Невидимая кнопка только для клавиатуры и скринридера */}
               <button type="button" className="sr-only" onClick={() => onOpen(entry.date)}>
-                {`Изменить текст записи за ${formatShort(entry.date)}`}
+                {`Изменить запись за ${formatShort(entry.date)}`}
               </button>
               <EntryPhotos entry={entry} repo={repo} store={store} />
             </article>

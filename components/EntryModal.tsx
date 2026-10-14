@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
 import { compareKeys, formatLong, formatShort, isValidKey, type DateKey } from "../lib/date.ts";
-import { GardenError, LIMITS, type Entry, type Mood } from "../lib/types.ts";
+import { GardenError, LIMITS, photosOf, type Entry, type Mood } from "../lib/types.ts";
 import type { Repo } from "../lib/repo.ts";
-import { itemsOf, saveEntryWithPhotos } from "../lib/entryPhotos.ts";
+import { itemsOf, saveEntryWithPhotos, type PhotoItem } from "../lib/entryPhotos.ts";
 import type { PhotoStore } from "../lib/photos.ts";
+import { CustomCamera } from "./CustomCamera.tsx";
+import { FeedPhoto } from "./FeedPhoto.tsx";
 import { MoodPicker } from "./MoodPicker.tsx";
 import { MoodFlower } from "./MoodFlower.tsx";
-import { SketchCloseButton, SketchDefs, SketchDoneButton, randomShapeId, resolveShapeId } from "./SketchUI.tsx";
+import { usePhotoPicker } from "./PhotoStrip.tsx";
+import { SketchCloseButton, SketchDefs, SketchDoneButton, SketchIconButton, randomShapeId, resolveShapeId } from "./SketchUI.tsx";
 import { Button } from "./ui.tsx";
 
 /** Тексты окна в одном месте. */
@@ -21,7 +24,7 @@ const T = {
 
 /** Фон окна — тот же тёмно-синий, что у всей системы. */
 const BG = "#02001a";
-/** Чуть светлее фона: шторка с цветком и плашка подтверждения. */
+/** Чуть светлее фона: шторка с цветком, плашка подтверждения, заглушки фото. */
 const BG_RAISED = "#0a0730";
 
 /** Приглушённая сине-фиолетовая гамма: линии, иконки, шрифт. */
@@ -40,7 +43,7 @@ const FORM_STYLE = {
 
 export interface EntryModalProps {
   repo: Repo;
-  /** Нужен только для сохранения: фото записи переписываются как есть, редактор их не трогает. */
+  /** Фото записи: добавляются и удаляются в редакторе, на диск попадают при сохранении. */
   photoStore: PhotoStore;
   /** Дата, с которой открыли окно. Внутри её можно сменить. */
   initialDate: DateKey;
@@ -50,7 +53,7 @@ export interface EntryModalProps {
   onDeleted: (entry: Entry) => void;
 }
 
-/** Редактор хранит только текст и настроение. Фото живут в ленте. */
+/** Текстовая часть формы, которую хранит черновик. Фото живут отдельно (см. items). */
 interface Form {
   body: string;
   mood: Mood | null;
@@ -89,9 +92,37 @@ function CheckButton({ disabled }: { disabled: boolean }) {
   );
 }
 
+/** Файл новой (ещё не сохранённой) фотографии для превью. Если поле в PhotoItem называется иначе, поправьте список ключей. */
+function previewSource(item: PhotoItem): Blob | null {
+  const r = item as unknown as Record<string, unknown>;
+  for (const key of ["file", "blob", "source", "original"]) {
+    const v = r[key];
+    if (v instanceof Blob) return v;
+  }
+  return null;
+}
+
+/** Превью фото, которое ещё не записано в хранилище. */
+function NewThumb({ item, alt }: { item: PhotoItem; alt: string }) {
+  const blob = previewSource(item);
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!blob) {
+      setUrl(null);
+      return;
+    }
+    const u = URL.createObjectURL(blob);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [blob]);
+  // eslint-disable-next-line @next/next/no-img-element
+  return url ? <img src={url} alt={alt} className="size-full object-cover" /> : <div className="size-full" aria-hidden="true" />;
+}
+
 /**
- * Чистый редактор текста: дата сверху, крестик и галочка по краям, ниже только поле для письма.
- * Фото здесь нет: они добавляются и удаляются прямо в ленте. Сохранение не трогает фото записи.
+ * Редактор записи: дата сверху, крестик и галочка по краям, поле для письма,
+ * сразу под ним иконки «галерея» / «камера» со счётчиком и лента миниатюр с крестиками.
+ * Фото записываются вместе с текстом: галочка, затем «Done».
  */
 export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSaved, onDeleted }: EntryModalProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -105,6 +136,8 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
 
   const [date, setDate] = useState<DateKey>(initialDate);
   const [form, setForm] = useState<Form>(EMPTY);
+  /** Фото в редакторе: сохранённые и добавленные только что. Попадают в запись при сохранении. */
+  const [items, setItems] = useState<readonly PhotoItem[]>([]);
   const [existing, setExisting] = useState<Entry | null>(null);
   /** Форма растения этого дня. Для новой записи выпадает случайно при открытии даты и уходит в хранилище вместе с записью. */
   const [shapeId, setShapeId] = useState(0);
@@ -112,6 +145,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   /** write — пишем; mood — шторка с цветком и настроением, она видна только перед сохранением. */
   const [step, setStep] = useState<"write" | "mood">("write");
   const formRef = useRef(form);
@@ -124,6 +158,15 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   /** Запись или черновик загружены в форму: можно ставить курсор в конец текста. */
   const [opened, setOpened] = useState(false);
 
+  const picker = usePhotoPicker({
+    items,
+    onChange: (update) => {
+      setError(null);
+      setItems((prev) => update(prev));
+    },
+    onError: setError,
+  });
+
   /** Загружает запись или черновик для даты. */
   const load = useCallback(
     (d: DateKey) => {
@@ -131,6 +174,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
       const draft = repo.getDraft(d);
       const base = baseOf(entry);
       setExisting(entry);
+      setItems(entry ? itemsOf(entry) : []);
       setShapeId(entry ? resolveShapeId(entry.shapeId, d) : randomShapeId());
       setError(null);
       setConfirmDelete(false);
@@ -145,7 +189,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     [repo],
   );
 
-  /** Незавершённое не теряем: пишем в черновик. */
+  /** Незавершённый текст не теряем: пишем в черновик. Фото в черновик не входят. */
   const flushDraft = useCallback(() => {
     if (closedBySave.current) return;
     const d = dateRef.current;
@@ -242,8 +286,20 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
     el.scrollIntoView({ block: "nearest" });
   }, [opened]);
 
-  /** У записи есть фото: даже с пустым текстом она не пустая. */
-  const hasPhotos = useMemo(() => (existing ? itemsOf(existing).length > 0 : false), [existing]);
+  /** Сохранённые фото записи: из них берутся миниатюры тех фото, что уже лежат в хранилище. */
+  const refById = useMemo(() => new Map((existing ? photosOf(existing) : []).map((p) => [p.id, p] as const)), [existing]);
+  const baseItems = useMemo(() => (existing ? itemsOf(existing) : []), [existing]);
+  const photosChanged = items.length !== baseItems.length || items.some((p, i) => p.kind === "new" || p.ref.id !== baseItems[i]?.ref.id);
+
+  const hasPhotos = items.length > 0;
+  const photoBusy = picker.busy > 0;
+  const canAddPhoto = photoStore.available && !saving && !photoBusy && picker.room > 0;
+
+  function removePhoto(id: string) {
+    if (saving) return;
+    setError(null);
+    setItems((prev) => prev.filter((item) => item.ref.id !== id));
+  }
 
   function changeDate(next: string) {
     if (!isValidKey(next)) return;
@@ -275,18 +331,16 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   }
 
   async function save() {
-    if (saving) return;
+    if (saving || photoBusy) return;
     setSaving(true);
     try {
       const wasNew = existing === null;
-      // Фото записи переписываем как есть, свежими из хранилища: их могли поменять в ленте.
-      const latest = repo.getEntry(date);
       const entry = await saveEntryWithPhotos(repo, photoStore, {
         date,
         body: form.body,
         mood: form.mood,
         shapeId,
-        items: latest ? itemsOf(latest) : [],
+        items,
       });
       closedBySave.current = true;
       onSaved(entry, wasNew);
@@ -317,7 +371,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
 
   const hasText = form.body.trim() !== "";
   const canSave = hasText || form.mood !== null || hasPhotos;
-  const dirty = !same(form, baseOf(existing));
+  const dirty = !same(form, baseOf(existing)) || photosChanged;
   const dateLabel = date === today ? T.today : formatShort(date);
 
   return (
@@ -326,8 +380,11 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
       aria-labelledby={titleId}
       onClose={handleClose}
       onCancel={(e) => {
-        // Esc в шторке с цветком возвращает к тексту: запись не закрывается.
-        if (step === "mood") {
+        // Esc в камере закрывает камеру, в шторке с цветком возвращает к тексту: запись не закрывается.
+        if (cameraOpen) {
+          e.preventDefault();
+          setCameraOpen(false);
+        } else if (step === "mood") {
           e.preventDefault();
           setStep("write");
         }
@@ -342,6 +399,9 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
         style={FORM_STYLE}
         onSubmit={(e) => {
           e.preventDefault();
+          // Кнопки фото лежат внутри формы: если у какой-то нет type="button", её нажатие не должно сохранять запись.
+          const submitter = (e.nativeEvent as SubmitEvent).submitter;
+          if (submitter?.closest("[data-photo-tools]")) return;
           if (step === "mood") {
             void save();
             return;
@@ -351,7 +411,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
             dialogRef.current?.close();
             return;
           }
-          // Текст стёрт целиком, а фото у записи нет: предлагаем удалить запись (корзины в редакторе больше нет).
+          // Текст стёрт целиком, а фото нет: предлагаем удалить запись (корзины в редакторе нет).
           if (existing && !hasText && !hasPhotos) {
             setConfirmDelete(true);
             return;
@@ -398,10 +458,10 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
                 className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
               />
             </div>
-            <CheckButton disabled={saving} />
+            <CheckButton disabled={saving || photoBusy} />
           </header>
 
-          <div className="flex-1 space-y-4 overflow-y-auto px-6 pb-6 pt-6" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
+          <div className="flex-1 space-y-4 overflow-y-auto px-6 pt-6" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
             {draftRestored && (
               <p className="flex items-center justify-between gap-2 text-lg text-(color:--ink)">
                 <span>Черновик восстановлен</span>
@@ -426,8 +486,56 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
                 setForm((f) => ({ ...f, body: e.target.value }));
               }}
               style={{ outline: "none", boxShadow: "none", border: "none", WebkitTapHighlightColor: "transparent" }}
-              className="block min-h-[50dvh] w-full resize-none appearance-none border-0 bg-transparent p-0 text-2xl leading-9 text-(color:--ink-soft) caret-(color:--ink) shadow-none outline-none ring-0 placeholder:text-(color:--ink)/70 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
+              className="block min-h-[30dvh] w-full resize-none appearance-none border-0 bg-transparent p-0 text-2xl leading-9 text-(color:--ink-soft) caret-(color:--ink) shadow-none outline-none ring-0 placeholder:text-(color:--ink)/70 focus:border-0 focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0"
             />
+
+            {/* Фото: иконки сразу под текстом, ниже лента миниатюр с крестиками */}
+            {photoStore.available && (
+              <div data-photo-tools className="space-y-3">
+                <div className="flex items-center gap-3">
+                  {picker.room > 0 && (
+                    <>
+                      <SketchIconButton icon="gallery" label="Добавить фото из галереи" onClick={picker.openGallery} disabled={!canAddPhoto} />
+                      <SketchIconButton icon="camera" label="Сделать фото" onClick={() => setCameraOpen(true)} disabled={!canAddPhoto} />
+                    </>
+                  )}
+                  {items.length > 0 && (
+                    <span className="font-mono text-sm tabular-nums text-(color:--ink)" aria-label={`Фото: ${items.length} из ${picker.max}`}>
+                      {items.length}/{picker.max}
+                    </span>
+                  )}
+                  {photoBusy && <span className="font-mono text-sm text-(color:--ink)">обрабатываю…</span>}
+                  {/* Скрытые поля выбора файлов для галереи */}
+                  {picker.inputs}
+                </div>
+
+                {items.length > 0 && (
+                  <ul className="-mx-6 flex gap-3 overflow-x-auto px-6 pb-1 pt-2" aria-label="Прикреплённые фото">
+                    {items.map((item, i) => {
+                      const ref = item.kind !== "new" ? refById.get(item.ref.id) : undefined;
+                      const alt = `Фото ${i + 1} из ${items.length}`;
+                      return (
+                        <li key={item.ref.id} className="relative shrink-0">
+                          <div className="size-20 overflow-hidden rounded-xl [&>*]:h-full [&>*]:w-full" style={{ backgroundColor: BG_RAISED }}>
+                            {ref ? <FeedPhoto store={photoStore} photo={ref} alt={alt} fit="square" /> : <NewThumb item={item} alt={alt} />}
+                          </div>
+                          {/* Обычный крестик в углу миниатюры */}
+                          <button
+                            type="button"
+                            aria-label={`Убрать фото ${i + 1}`}
+                            disabled={saving}
+                            onClick={() => removePhoto(item.ref.id)}
+                            className="absolute -right-2 -top-2 grid size-7 place-items-center rounded-full bg-black/70 text-lg leading-none text-white active:scale-90 disabled:opacity-40"
+                          >
+                            <span aria-hidden="true">×</span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
 
             {error && (
               <p role="alert" className="rounded-2xl bg-danger/10 p-3 text-lg text-danger">
@@ -490,6 +598,19 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
           </div>
         )}
       </form>
+
+      {/* Камера поверх редактора. Внутри dialog, а не в портале на body: окно открыто через showModal (top layer),
+          и всё, что лежит вне него, оказалось бы под ним. Вне <form>, чтобы кнопки камеры не отправляли форму. */}
+      {cameraOpen && (
+        <div className="fixed inset-0 z-20" style={{ backgroundColor: BG }}>
+          <CustomCamera
+            onCapture={(file) => {
+              void picker.addFiles([file]);
+            }}
+            onClose={() => setCameraOpen(false)}
+          />
+        </div>
+      )}
     </dialog>
   );
 }
