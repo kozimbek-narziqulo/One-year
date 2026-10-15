@@ -150,6 +150,9 @@ const ru = {
 
   "settings.saveFailed": "Не удалось сохранить настройку: нет места или хранилище недоступно.",
 
+  "photo.noFile": "Нет файла",
+  "photo.loadFailed": "Не удалось показать фото.",
+
   "garden.aria": "Сад {year}",
   "garden.hasEntry": ", есть запись",
   "garden.noEntry": ", записи нет",
@@ -307,6 +310,9 @@ const en: Dict = {
 
   "settings.saveFailed": "Couldn't save the setting: out of space or storage is unavailable.",
 
+  "photo.noFile": "No file",
+  "photo.loadFailed": "Couldn't show the photo.",
+
   "garden.aria": "Garden {year}",
   "garden.hasEntry": ", has an entry",
   "garden.noEntry": ", no entry",
@@ -460,6 +466,9 @@ const es: Dict = {
   "import.failed": "No se pudo importar. Tus entradas no cambiaron.",
 
   "settings.saveFailed": "No se pudo guardar el ajuste: no hay espacio o el almacenamiento no está disponible.",
+
+  "photo.noFile": "Sin archivo",
+  "photo.loadFailed": "No se pudo mostrar la foto.",
 
   "garden.aria": "Jardín {year}",
   "garden.hasEntry": ", hay entrada",

@@ -1,27 +1,16 @@
 "use client";
 
-// Окно «Копия и язык»: статистика, сохранение и загрузка ZIP, выбор языка.
-//
-// Ключи переводов, которые нужны этому окну (добавьте их в словари):
-//   backup.title, backup.close, backup.language, backup.notPersistent, backup.settingFailed,
-//   backup.entries, backup.photos, backup.lastBackup, backup.never, backup.changes,
-//   backup.save, backup.preparing, backup.progressPhotos, backup.saved, backup.photosMissingExport,
-//   backup.load, backup.reading, backup.loadingRecords, backup.loadingPhotos,
-//   backup.skipped, backup.photosMissingFile, backup.noPhotoStore,
-//   backup.mode, backup.modeMerge, backup.modeReplace,
-//   backup.added, backup.updated, backup.unchanged, backup.willRemove,
-//   backup.import, backup.cancel, backup.imported, backup.replaced, backup.photosFailed,
-//   backup.failed
+// Окно «Копия и настройки» в стиле iOS: статистика, язык, сохранение и загрузка ZIP.
+// Все тексты берутся из lib/i18n.ts (ключи backup.*, import.*, panel.*, lang.*, settings.*).
 
 import { useEffect, useId, useRef, useState } from "react";
 import { applyImportWithPhotos, backupFilename, buildBackupZip, planImport, readBackupFile, type ImportMode, type ParsedBackup } from "../lib/backup.ts";
 import { downloadBlob } from "../lib/download.ts";
-import { formatShort } from "../lib/date.ts";
-import { errorText } from "../lib/i18n.ts";
-import { useT } from "./I18nProvider.tsx";
+import { errorText, formatDateFull, LANGUAGES, LANGUAGE_NAMES, type Language } from "../lib/i18n.ts";
 import type { PhotoStore } from "../lib/photos.ts";
 import { photosOf } from "../lib/types.ts";
 import type { GardenState, Repo } from "../lib/repo.ts";
+import { useT } from "./I18nProvider.tsx";
 import { Button, IconButton, IconClose } from "./ui.tsx";
 
 export interface BackupPanelProps {
@@ -33,22 +22,7 @@ export interface BackupPanelProps {
   onMessage: (text: string) => void;
 }
 
-type Language = GardenState["settings"]["language"];
-
-/** Названия языков пишутся на самих языках и не переводятся. */
-const LANGUAGES: [Language, string][] = [
-  ["ru", "Русский"],
-  ["en", "English"],
-];
-
-const dateTime = (ms: number) => {
-  const d = new Date(ms);
-  const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-  return `${formatShort(key)} ${d.getFullYear()}`;
-};
-
-/** Склеивает непустые части через « · »: тексты собираются из переводимых слов и чисел. */
-const join = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" · ");
+const sentence = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" ");
 
 function Row({ label, value }: { label: string; value: string | number }) {
   return (
@@ -61,6 +35,7 @@ function Row({ label, value }: { label: string; value: string | number }) {
 
 export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: BackupPanelProps) {
   const { t } = useT();
+  const lang = state.settings.language;
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
@@ -88,15 +63,15 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
     if (busy) return;
     setBusy(true);
     setExportNote(null);
-    setProgress(t("backup.preparing"));
+    setProgress(t("backup.building"));
     try {
       const r = await buildBackupZip(repo, photoStore, {
-        onProgress: (done, total) => setProgress(`${t("backup.progressPhotos")}: ${done}/${total}`),
+        onProgress: (done, total) => setProgress(t("backup.buildingPhotos", { done, total })),
       });
       downloadBlob(backupFilename(), r.blob);
       repo.markBackedUp();
-      onMessage(join(t("backup.saved"), `${t("backup.entries")} ${r.entries}`, r.photos > 0 && `${t("backup.photos")} ${r.photos}`));
-      if (r.photosMissing > 0) setExportNote(`${t("backup.photosMissingExport")}: ${r.photosMissing}`);
+      onMessage(t("backup.saved", { entries: r.entries, photos: r.photos }));
+      if (r.photosMissing > 0) setExportNote(t("backup.photosMissing", { count: r.photosMissing }));
     } catch (e) {
       setExportNote(errorText(t, e) ?? t("backup.failed"));
     } finally {
@@ -110,13 +85,13 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
     setParsed(null);
     if (!file) return;
     setBusy(true);
-    setProgress(t("backup.reading"));
+    setProgress(t("import.reading"));
     try {
       const data = await readBackupFile(file);
       setParsed({ name: file.name, data });
       setMode("merge");
     } catch (e) {
-      setImportError(errorText(t, e) ?? t("backup.failed"));
+      setImportError(errorText(t, e) ?? t("import.readFailed"));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -128,23 +103,23 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
     if (!parsed || busy) return;
     setBusy(true);
     setImportError(null);
-    setProgress(parsed.data.photoCount > 0 ? t("backup.loadingPhotos") : t("backup.loadingRecords"));
+    setProgress(parsed.data.photoCount > 0 ? t("import.loadingPhotos") : t("import.loadingEntries"));
     try {
       const p = await applyImportWithPhotos(repo, photoStore, parsed.data, mode, false, (done, total) =>
-        setProgress(`${t("backup.loadingPhotos")}: ${done}/${total}`),
+        setProgress(t("import.loadingPhotosN", { done, total })),
       );
       onMessage(
-        join(
+        sentence(
           mode === "replace"
-            ? `${t("backup.replaced")}: ${Object.keys(p.result).length}`
-            : `${t("backup.imported")}: ${t("backup.added")} ${p.added}, ${t("backup.updated")} ${p.updated}`,
-          p.photosWritten > 0 && `${t("backup.photos")} ${p.photosWritten}`,
-          p.photosFailed > 0 && `${t("backup.photosFailed")} ${p.photosFailed}`,
+            ? t("import.doneReplace", { count: Object.keys(p.result).length })
+            : t("import.doneMerge", { added: p.added, updated: p.updated }),
+          p.photosWritten > 0 && t("import.donePhotos", { count: p.photosWritten }),
+          p.photosFailed > 0 && t("import.donePhotosFailed", { count: p.photosFailed }),
         ),
       );
       setParsed(null);
     } catch (e) {
-      setImportError(errorText(t, e) ?? t("backup.failed"));
+      setImportError(errorText(t, e) ?? t("import.failed"));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -155,7 +130,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
     try {
       repo.updateSettings({ language });
     } catch {
-      onMessage(t("backup.settingFailed"));
+      onMessage(t("settings.saveFailed"));
     }
   }
 
@@ -176,9 +151,9 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
 
         <div className="flex shrink-0 items-center justify-between gap-2 px-5 pb-1 pt-3">
           <h2 id={titleId} className="text-xl font-semibold">
-            {t("backup.title")}
+            {t("panel.title")}
           </h2>
-          <IconButton label={t("backup.close")} onClick={() => dialogRef.current?.close()}>
+          <IconButton label={t("common.close")} onClick={() => dialogRef.current?.close()}>
             <IconClose />
           </IconButton>
         </div>
@@ -186,31 +161,35 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
         <div className="space-y-5 overflow-y-auto px-4 pb-6 pt-3">
           {!state.persistent && (
             <p role="alert" className={warn}>
-              {t("backup.notPersistent")}
+              {t("panel.notPersistent")}
             </p>
           )}
 
           {/* Статистика */}
-          <div className="divide-y divide-border overflow-hidden rounded-2xl bg-surface">
-            <Row label={t("backup.entries")} value={count} />
-            {photoTotal > 0 && <Row label={t("backup.photos")} value={photoTotal} />}
-            <Row label={t("backup.lastBackup")} value={state.meta.lastBackupAt ? dateTime(state.meta.lastBackupAt) : t("backup.never")} />
-            {state.meta.changesSinceBackup > 0 && <Row label={t("backup.changes")} value={state.meta.changesSinceBackup} />}
+          <div className="space-y-2">
+            <div className="divide-y divide-border overflow-hidden rounded-2xl bg-surface">
+              <Row label={t("backup.statEntries")} value={count} />
+              {photoTotal > 0 && <Row label={t("backup.statPhotos")} value={photoTotal} />}
+              <Row label={t("backup.statLast")} value={state.meta.lastBackupAt ? formatDateFull(state.meta.lastBackupAt, lang) : t("backup.never")} />
+            </div>
+            {state.meta.changesSinceBackup > 0 && (
+              <p className="px-2 text-sm text-text-muted">{t("backup.changes", { count: state.meta.changesSinceBackup })}</p>
+            )}
           </div>
 
           {/* Язык */}
           <div className="overflow-hidden rounded-2xl bg-surface">
             <div className="flex min-h-(--layout-tapMin) items-center justify-between gap-3 px-4 text-base">
-              <label htmlFor={langId}>{t("backup.language")}</label>
+              <label htmlFor={langId}>{t("lang.title")}</label>
               <select
                 id={langId}
-                value={state.settings.language}
+                value={lang}
                 onChange={(e) => changeLanguage(e.target.value as Language)}
                 className="min-h-(--layout-tapMin) cursor-pointer bg-transparent text-right text-base text-text-muted"
               >
-                {LANGUAGES.map(([code, name]) => (
+                {LANGUAGES.map((code) => (
                   <option key={code} value={code}>
-                    {name}
+                    {LANGUAGE_NAMES[code]}
                   </option>
                 ))}
               </select>
@@ -223,7 +202,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
               {t("backup.save")}
             </Button>
             <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={busy}>
-              {t("backup.load")}
+              {t("import.choose")}
             </Button>
           </div>
 
@@ -256,59 +235,56 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
           {/* Предпросмотр загрузки */}
           {parsed && plan && (
             <div className="space-y-3">
-              <div className="divide-y divide-border overflow-hidden rounded-2xl bg-surface">
-                <div className="truncate px-4 py-3 text-sm text-text-muted">{parsed.name}</div>
-                <Row label={t("backup.entries")} value={parsed.data.entries.length} />
-                {parsed.data.photoCount > 0 && <Row label={t("backup.photos")} value={parsed.data.photoCount} />}
-                {parsed.data.skipped > 0 && <Row label={t("backup.skipped")} value={parsed.data.skipped} />}
-              </div>
+              <p className="px-2 text-sm">
+                {sentence(
+                  t("import.fileSummary", { name: parsed.name, entries: parsed.data.entries.length, photos: parsed.data.photoCount }),
+                  parsed.data.skipped > 0 && t("import.skipped", { count: parsed.data.skipped }),
+                )}
+              </p>
 
               {parsed.data.photosMissing > 0 && (
                 <p role="alert" className={warn}>
-                  {t("backup.photosMissingFile")}: {parsed.data.photosMissing}
+                  {t("import.photosMissing", { count: parsed.data.photosMissing })}
                 </p>
               )}
               {parsed.data.photoCount > 0 && !photoStore.available && (
                 <p role="alert" className={warn}>
-                  {t("backup.noPhotoStore")}
+                  {t("import.noPhotoStore")}
                 </p>
               )}
 
               <fieldset className="divide-y divide-border overflow-hidden rounded-2xl bg-surface">
-                <legend className="sr-only">{t("backup.mode")}</legend>
-                {(
-                  [
-                    ["merge", t("backup.modeMerge")],
-                    ["replace", t("backup.modeReplace")],
-                  ] as [ImportMode, string][]
-                ).map(([value, label]) => (
+                <legend className="sr-only">{t("import.howTitle")}</legend>
+                {(["merge", "replace"] as const).map((value) => (
                   <label key={value} className="flex min-h-(--layout-tapMin) items-center gap-3 px-4 text-base">
                     <input type="radio" name="backup-mode" checked={mode === value} onChange={() => setMode(value)} className="size-5 accent-accent" />
-                    {label}
+                    {value === "merge" ? t("import.merge") : t("import.replace")}
                   </label>
                 ))}
               </fieldset>
 
-              <p className="px-1 text-sm text-text-muted" aria-live="polite">
-                {join(
-                  `${t("backup.added")} ${plan.added}`,
-                  `${t("backup.updated")} ${plan.updated}`,
-                  `${t("backup.unchanged")} ${plan.unchanged}`,
+              <p className="px-2 text-sm text-text-muted" aria-live="polite">
+                {sentence(
+                  t("import.plan", { added: plan.added, updated: plan.updated, unchanged: plan.unchanged }),
+                  plan.photosAdded > 0 && t("import.planPhotos", { count: plan.photosAdded }),
+                  plan.keptCurrent > 0 && t("import.planKept", { count: plan.keptCurrent }),
                 )}
               </p>
 
               {mode === "replace" && (plan.removed > 0 || plan.photosRemoved > 0) && (
                 <p role="alert" className={warn}>
-                  {join(`${t("backup.willRemove")}: ${plan.removed}`, plan.photosRemoved > 0 && `${t("backup.photos")} ${plan.photosRemoved}`)}
+                  {t("import.removeWarn", { entries: plan.removed })}
+                  {plan.photosRemoved > 0 && t("import.removeWarnPhotos", { count: plan.photosRemoved })}
+                  {t("import.removeWarnTail")}
                 </p>
               )}
 
               <div className="flex flex-col gap-2 [&>button]:w-full">
                 <Button variant="primary" onClick={() => void doImport()} disabled={busy}>
-                  {t("backup.import")}
+                  {t("import.load")}
                 </Button>
                 <Button variant="ghost" onClick={() => setParsed(null)} disabled={busy}>
-                  {t("backup.cancel")}
+                  {t("import.cancel")}
                 </Button>
               </div>
             </div>
