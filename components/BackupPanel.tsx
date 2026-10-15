@@ -49,7 +49,7 @@ function Select<T extends string>({ label, value, options, onChange }: { label: 
 }
 
 export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: BackupPanelProps) {
-  const t = useT();
+  const { t } = useT();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
