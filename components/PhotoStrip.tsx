@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
 import { newPhotoItem, type PhotoItem } from "../lib/entryPhotos.ts";
 import { compressImage } from "../lib/image.ts";
 import type { PhotoStore } from "../lib/photos.ts";
@@ -169,7 +168,10 @@ export function PhotoGallery({ store, items, busy, disabled, onRemove }: PhotoGa
             className="absolute right-1 top-1 grid size-10 place-items-center rounded-full text-white disabled:opacity-40"
           >
             <span className="grid size-7 place-items-center rounded-full bg-black/55">
-              <X size={16} aria-hidden="true" />
+              {/* Крестик: тот же рукописный штрих, что и в ленте (MemoryFeed) */}
+              <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" aria-hidden="true" focusable={false}>
+                <path d="M5 5.2c3.3 3.2 6.6 6.3 10 9.6M14.8 5c-3.2 3.4-6.4 6.7-9.6 10" />
+              </svg>
             </span>
           </button>
         </li>

@@ -3,6 +3,14 @@ import type { DateKey } from "./date.ts";
 export type Mood = 1 | 2 | 3 | 4 | 5;
 export const MOOD_VALUES: readonly Mood[] = [1, 2, 3, 4, 5];
 
+/** Языки интерфейса. Тексты лежат в i18n.ts: русский словарь главный, остальные обязаны содержать те же ключи. */
+export const LANGUAGES = ["ru", "en", "es"] as const;
+export type Language = (typeof LANGUAGES)[number];
+export const DEFAULT_LANGUAGE: Language = "ru";
+
+/** Проверка значения из хранилища или импортированного файла: подходит только один из LANGUAGES. */
+export const isLanguage = (v: unknown): v is Language => typeof v === "string" && (LANGUAGES as readonly string[]).includes(v);
+
 /**
  * Ссылка на фото. Сам сжатый файл лежит в IndexedDB (photos.ts), а здесь только то, что нужно,
  * чтобы нарисовать место под фото до его загрузки.
@@ -42,23 +50,20 @@ export const MAX_SHAPE_ID = 10_000;
 /** Допустимый shapeId: целое число от 0 до MAX_SHAPE_ID. */
 export const isShapeId = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= MAX_SHAPE_ID;
 
-export type ThemeSetting = "system" | "light" | "dark";
 export type MoodPalette = "default" | "cvd";
 export type PlantPalette = "default" | "autumn" | "ink";
-export type Density = "comfortable" | "compact";
 
+/** Тема не настраивается: приложение только ночное (см. layout.tsx и globals.css). */
 export interface Settings {
-  theme: ThemeSetting;
   moodPalette: MoodPalette;
   plantPalette: PlantPalette;
-  density: Density;
+  language: Language;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  theme: "system",
   moodPalette: "default",
   plantPalette: "default",
-  density: "comfortable",
+  language: DEFAULT_LANGUAGE,
 };
 
 export interface Meta {
