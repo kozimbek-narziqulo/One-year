@@ -9,7 +9,11 @@
 // Старые копии (.json, version 1, только тексты) по-прежнему загружаются.
 // Порядок при загрузке: сначала фото в IndexedDB, потом записи в LocalStorage; при ошибке
 // записанные фото удаляются, записи остаются как были.
+//
+// Ошибки: BackupError несёт только код (см. backupError.ts). Текст для человека
+// получают через errorText(t, e) из i18n.ts.
 
+import { BackupError } from "./backupError.ts";
 import { BACKUP_APP_ID, BACKUP_PREFIX } from "./brand.ts";
 import { compareKeys, todayKey, type DateKey } from "./date.ts";
 import { referencedPhotoIds, type PhotoStore } from "./photos.ts";
@@ -17,12 +21,9 @@ import { sanitizeEntry, settingsFrom, type Repo } from "./repo.ts";
 import { GardenError, LIMITS, photosOf, type BackupFile, type Entry, type PhotoRef, type Settings } from "./types.ts";
 import { createZip, looksLikeZip, openZip, ZipError, type ZipArchive, type ZipEntry, type ZipInput } from "./zip.ts";
 
-export class BackupError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "BackupError";
-  }
-}
+// Остальной код импортирует BackupError отсюда, поэтому реэкспортируем.
+export { BackupError };
+export type { BackupErrorCode } from "./backupError.ts";
 
 export const BACKUP_JSON_NAME = "backup.json";
 
@@ -81,9 +82,7 @@ export async function buildBackupZip(
       continue;
     }
     totalBytes += rec.blob.size;
-    if (totalBytes > LIMITS.backupMaxBytes) {
-      throw new BackupError("Фото слишком много для одного файла копии. Удалите часть фото или сохраните копию позже, когда приложение это умеет по частям.");
-    }
+    if (totalBytes > LIMITS.backupMaxBytes) throw new BackupError("tooManyPhotos");
     found.set(ref.id, {
       ref: { id: ref.id, width: rec.width, height: rec.height, bytes: rec.blob.size, mime: rec.mime },
       blob: rec.blob,
@@ -118,7 +117,7 @@ export async function buildBackupZip(
     const blob = await createZip(inputs, { now });
     return { blob, entries: outEntries.length, photos: found.size, photosMissing: missing };
   } catch (e) {
-    if (e instanceof ZipError) throw new BackupError(e.message);
+    if (e instanceof ZipError) throw new BackupError("zipFailed", e.message);
     throw e;
   }
 }
@@ -169,20 +168,20 @@ export interface ParsedBackup {
 type PhotoPresence = (ref: PhotoRef) => boolean;
 
 function parseBackupData(text: string, nowMs: number, hasPhoto: PhotoPresence): Omit<ParsedBackup, "format" | "photoSource"> {
-  if (text.length > LIMITS.importMaxBytes) throw new BackupError("Файл слишком большой для копии записей.");
+  if (text.length > LIMITS.importMaxBytes) throw new BackupError("fileTooLarge");
   let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
-    throw new BackupError("Это не файл копии: он не читается как JSON.");
+    throw new BackupError("notJson");
   }
-  if (!data || typeof data !== "object" || Array.isArray(data)) throw new BackupError("Это не файл копии: неожиданное содержимое.");
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new BackupError("unexpected");
   const d = data as Record<string, unknown>;
-  if (d.app !== BACKUP_APP_ID) throw new BackupError("Это файл другого приложения, записи из него не импортируются.");
-  if (typeof d.version !== "number" || !Number.isInteger(d.version)) throw new BackupError("В файле нет номера версии.");
-  if (d.version > 2) throw new BackupError("Файл создан более новой версией приложения. Обновите приложение и повторите.");
-  if (!Array.isArray(d.entries)) throw new BackupError("В файле нет списка записей.");
-  if (d.entries.length > LIMITS.importMaxEntries) throw new BackupError("В файле слишком много записей.");
+  if (d.app !== BACKUP_APP_ID) throw new BackupError("otherApp");
+  if (typeof d.version !== "number" || !Number.isInteger(d.version)) throw new BackupError("noVersion");
+  if (d.version > 2) throw new BackupError("newerVersion");
+  if (!Array.isArray(d.entries)) throw new BackupError("noEntries");
+  if (d.entries.length > LIMITS.importMaxEntries) throw new BackupError("tooManyEntries");
 
   const byDate = new Map<DateKey, Entry>();
   const today = todayKey(new Date(nowMs));
@@ -203,7 +202,7 @@ function parseBackupData(text: string, nowMs: number, hasPhoto: PhotoPresence): 
     // Одна запись в день: при повторе в файле остаётся более свежая.
     if (!dup || e.updatedAt >= dup.updatedAt) byDate.set(e.date, e);
   }
-  if (byDate.size === 0 && d.entries.length > 0) throw new BackupError("Ни одна запись в файле не прошла проверку. Файл повреждён?");
+  if (byDate.size === 0 && d.entries.length > 0) throw new BackupError("allInvalid");
 
   // Ссылки на фото, которых в файле нет, убираем: после загрузки в записях не должно быть ссылок в никуда.
   const entries: Entry[] = [];
@@ -243,14 +242,15 @@ function parseBackupData(text: string, nowMs: number, hasPhoto: PhotoPresence): 
 
 /**
  * Разбор текстового файла копии (.json). Фото в таком файле нет: ссылки на них убираются.
- * Бросает BackupError с понятным текстом.
+ * Бросает BackupError с кодом.
  */
 export function parseBackup(text: string, nowMs: number = Date.now()): ParsedBackup {
   return { ...parseBackupData(text, nowMs, () => false), format: "json", photoSource: null };
 }
 
+/** Любую ошибку чтения приводим к BackupError. Текст ZipError уходит в detail (для консоли), человеку показывается код zipFailed. */
 const asBackupError = (e: unknown): BackupError =>
-  e instanceof BackupError ? e : e instanceof ZipError ? new BackupError(e.message) : new BackupError("Не удалось прочитать файл.");
+  e instanceof BackupError ? e : e instanceof ZipError ? new BackupError("zipFailed", e.message) : new BackupError("readFailed");
 
 const baseName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
 const depthOf = (path: string) => path.split("/").length;
@@ -267,21 +267,21 @@ function photoSourceOf(zip: ZipArchive, index: ReadonlyMap<string, ZipEntry>): P
   return {
     async read(ref) {
       const entry = index.get(ref.id);
-      if (!entry) throw new BackupError("В архиве нет файла этого фото.");
+      if (!entry) throw new BackupError("photoMissing");
       let bytes: Uint8Array<ArrayBuffer>;
       try {
         bytes = await zip.read(entry, LIMITS.backupPhotoMaxBytes);
       } catch (e) {
         throw asBackupError(e);
       }
-      if (!matchesMime(bytes, ref.mime)) throw new BackupError("Файл фото повреждён или это не изображение.");
+      if (!matchesMime(bytes, ref.mime)) throw new BackupError("photoCorrupt");
       return new Blob([bytes], { type: ref.mime });
     },
   };
 }
 
 async function parseZipBackup(file: Blob, nowMs: number): Promise<ParsedBackup> {
-  if (file.size > LIMITS.backupMaxBytes) throw new BackupError("Файл слишком большой для копии.");
+  if (file.size > LIMITS.backupMaxBytes) throw new BackupError("fileTooLarge");
   let zip: ZipArchive;
   try {
     zip = await openZip(file);
@@ -292,7 +292,7 @@ async function parseZipBackup(file: Blob, nowMs: number): Promise<ParsedBackup> 
   const jsonEntry = zip.entries
     .filter((e) => baseName(e.name) === BACKUP_JSON_NAME && !e.name.startsWith("__MACOSX/"))
     .sort((a, b) => depthOf(a.name) - depthOf(b.name))[0];
-  if (!jsonEntry) throw new BackupError("В архиве нет файла backup.json. Это не копия дневника.");
+  if (!jsonEntry) throw new BackupError("noBackupJson");
 
   let text: string;
   try {
@@ -316,16 +316,16 @@ async function parseZipBackup(file: Blob, nowMs: number): Promise<ParsedBackup> 
 
 /**
  * Разбор выбранного файла: ZIP-архив или старый .json. Формат определяется по содержимому,
- * а не по расширению. Бросает BackupError с понятным текстом.
+ * а не по расширению. Бросает BackupError с кодом.
  */
 export async function readBackupFile(file: Blob, nowMs: number = Date.now()): Promise<ParsedBackup> {
   if (await looksLikeZip(file)) return parseZipBackup(file, nowMs);
-  if (file.size > LIMITS.importMaxBytes) throw new BackupError("Файл слишком большой для копии записей.");
+  if (file.size > LIMITS.importMaxBytes) throw new BackupError("fileTooLarge");
   let text: string;
   try {
     text = await file.text();
   } catch {
-    throw new BackupError("Не удалось прочитать файл.");
+    throw new BackupError("readFailed");
   }
   return parseBackup(text, nowMs);
 }
@@ -426,7 +426,7 @@ function commitPlan(repo: Repo, plan: ImportPlan, parsed: ParsedBackup, withSett
  * здесь фото записать некуда, и записи остались бы со ссылками в никуда.
  */
 export function applyImport(repo: Repo, parsed: ParsedBackup, mode: ImportMode, withSettings: boolean): ImportPlan {
-  if (parsed.photoCount > 0) throw new BackupError("Копия с фото: загрузите её через applyImportWithPhotos.");
+  if (parsed.photoCount > 0) throw new BackupError("photosRequired");
   const plan = planImport(repo.getState().entries, parsed.entries, mode, planOptionsOf(parsed));
   commitPlan(repo, plan, parsed, withSettings);
   return plan;

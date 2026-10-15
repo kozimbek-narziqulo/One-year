@@ -1,26 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from "react";
-import { compareKeys, formatLong, formatShort, isValidKey, type DateKey } from "../lib/date.ts";
+import { compareKeys, isValidKey, type DateKey } from "../lib/date.ts";
+import { errorText, formatDayLong, formatDayShort, type Translate } from "../lib/i18n.ts";
 import { GardenError, LIMITS, photosOf, type Entry, type Mood } from "../lib/types.ts";
 import type { Repo } from "../lib/repo.ts";
 import { itemsOf, saveEntryWithPhotos, type PhotoItem } from "../lib/entryPhotos.ts";
 import type { PhotoStore } from "../lib/photos.ts";
 import { CustomCamera } from "./CustomCamera.tsx";
 import { FeedPhoto } from "./FeedPhoto.tsx";
+import { useT } from "./I18nProvider.tsx";
 import { MoodPicker } from "./MoodPicker.tsx";
 import { MoodFlower } from "./MoodFlower.tsx";
 import { usePhotoPicker } from "./PhotoStrip.tsx";
 import { SketchCloseButton, SketchDefs, SketchDoneButton, SketchIconButton, randomShapeId, resolveShapeId } from "./SketchUI.tsx";
 import { Button } from "./ui.tsx";
-
-/** Тексты окна в одном месте. */
-const T = {
-  placeholder: "Начать писать",
-  done: "Done",
-  today: "Сегодня",
-  moodTitle: "How are you feeling today?",
-} as const;
 
 /** Фон окна — тот же тёмно-синий, что у всей системы. */
 const BG = "#02001a";
@@ -67,22 +61,23 @@ function baseOf(entry: Entry | null): Form {
 
 const same = (a: Form, b: Form) => a.body === b.body && a.mood === b.mood;
 
-function saveErrorText(e: unknown): string {
+function saveErrorText(t: Translate, e: unknown): string {
   if (e instanceof GardenError) {
-    if (e.code === "quota") return "Не удалось сохранить: на телефоне кончилось место. Текст остался на экране.";
-    if (e.code === "unavailable") return "Не удалось записать в хранилище браузера. Текст остался на экране: скопируйте его, чтобы не потерять.";
-    return e.message;
+    if (e.code === "quota") return t("entry.saveQuota");
+    if (e.code === "unavailable") return t("entry.saveUnavailable");
+    return errorText(t, e) ?? t("entry.saveFailed");
   }
-  return "Не удалось сохранить. Текст остался на экране.";
+  return t("entry.saveFailed");
 }
 
 /** Нарисованная от руки галочка: в той же манере, что крестик. */
 function CheckButton({ disabled }: { disabled: boolean }) {
+  const { t } = useT();
   return (
     <button
       type="submit"
       disabled={disabled}
-      aria-label="Готово"
+      aria-label={t("entry.done")}
       className="grid min-h-(--layout-tapMin) min-w-(--layout-tapMin) place-items-center rounded-full text-(color:--ink-soft) transition-transform duration-(--duration-fast) active:scale-90 disabled:opacity-40"
     >
       <svg viewBox="0 0 32 32" className="size-8" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable={false}>
@@ -122,9 +117,10 @@ function NewThumb({ item, alt }: { item: PhotoItem; alt: string }) {
 /**
  * Редактор записи: дата сверху, крестик и галочка по краям, поле для письма,
  * сразу под ним иконки «галерея» / «камера» со счётчиком и лента миниатюр с крестиками.
- * Фото записываются вместе с текстом: галочка, затем «Done».
+ * Фото записываются вместе с текстом: галочка, затем «Готово».
  */
 export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSaved, onDeleted }: EntryModalProps) {
+  const { t, lang } = useT();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const mainRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -249,8 +245,8 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
 
   // Автосохранение черновика с задержкой.
   useEffect(() => {
-    const t = window.setTimeout(flushDraft, LIMITS.draftSaveDebounceMs);
-    return () => window.clearTimeout(t);
+    const timer = window.setTimeout(flushDraft, LIMITS.draftSaveDebounceMs);
+    return () => window.clearTimeout(timer);
   }, [form, date, existing, flushDraft]);
 
   // Страницу могут закрыть или усыпить раньше, чем сработает задержка: тогда черновик пишем сразу.
@@ -304,7 +300,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   function changeDate(next: string) {
     if (!isValidKey(next)) return;
     if (compareKeys(next, today) > 0) {
-      setError("Завтра ещё не наступило.");
+      setError(t("error.future"));
       return;
     }
     flushDraft();
@@ -345,7 +341,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
       closedBySave.current = true;
       onSaved(entry, wasNew);
     } catch (e) {
-      setError(saveErrorText(e));
+      setError(saveErrorText(t, e));
       setSaving(false);
       setStep("write");
     }
@@ -359,7 +355,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
       if (gone) onDeleted(gone);
       else onClose();
     } catch (e) {
-      setError(saveErrorText(e));
+      setError(saveErrorText(t, e));
     }
   }
 
@@ -372,7 +368,8 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
   const hasText = form.body.trim() !== "";
   const canSave = hasText || form.mood !== null || hasPhotos;
   const dirty = !same(form, baseOf(existing)) || photosChanged;
-  const dateLabel = date === today ? T.today : formatShort(date);
+  const dateLabel = date === today ? t("common.today") : formatDayShort(date, lang);
+  const dateLong = formatDayLong(date, lang);
 
   return (
     <dialog
@@ -392,7 +389,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
       onClick={(e) => {
         if (e.target === dialogRef.current) dialogRef.current?.close();
       }}
-      className="entry-dialog fixed inset-x-0 top-0 m-0 h-dvh max-h-none w-full max-w-none overflow-hidden border-0 bg-transparent p-0 text-text sm:inset-auto sm:m-auto sm:h-auto sm:max-h-[92dvh] sm:max-w-(--layout-modalMax)"
+      className="entry-dialog fixed inset-x-0 top-0 m-0 h-dvh max-h-none w-full max-w-none overflow-hidden border-0 bg-transparent p-0 text-text sm:inset-auto sm:m-auto sm:h-auto sm:max-h-[92dvh] sm:max-w-(--layout-modalMax) md:max-w-xl lg:max-w-2xl"
     >
       <form
         noValidate
@@ -421,28 +418,28 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
             dialogRef.current?.close();
             return;
           }
-          // Первая галочка открывает цветок с настроением, «Done» в шторке сохраняет.
+          // Первая галочка открывает цветок с настроением, «Готово» в шторке сохраняет.
           setStep("mood");
         }}
-        className="relative flex h-full flex-col sm:h-auto sm:max-h-[92dvh] sm:min-h-[32rem] sm:rounded-lg sm:shadow-md"
+        className="relative flex h-full flex-col sm:h-auto sm:max-h-[92dvh] sm:min-h-[32rem] sm:rounded-lg sm:shadow-md md:min-h-[36rem] md:rounded-3xl"
       >
         <SketchDefs />
 
         <div ref={mainRef} className="flex min-h-0 flex-1 flex-col">
           {/* Минималистичная верхняя панель: крестик, дата, галочка */}
           <header
-            className="grid shrink-0 grid-cols-[auto_1fr_auto] items-center gap-2 px-3"
+            className="grid shrink-0 grid-cols-[auto_1fr_auto] items-center gap-2 px-3 md:px-5"
             style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
           >
-            <SketchCloseButton label="Закрыть" onClick={() => dialogRef.current?.close()} />
+            <SketchCloseButton label={t("common.close")} onClick={() => dialogRef.current?.close()} />
             <div className="relative justify-self-center">
               <h2 id={titleId} className="sr-only">
-                {formatLong(date)}
+                {dateLong}
               </h2>
               <button
                 type="button"
                 onClick={openDatePicker}
-                aria-label={`Сменить дату, сейчас ${formatLong(date)}`}
+                aria-label={t("entry.changeDate", { date: dateLong })}
                 className="min-h-(--layout-tapMin) px-3 text-2xl text-(color:--ink-soft)"
               >
                 {dateLabel}
@@ -461,18 +458,18 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
             <CheckButton disabled={saving || photoBusy} />
           </header>
 
-          <div className="flex-1 space-y-4 overflow-y-auto px-6 pt-6" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
+          <div className="flex-1 space-y-4 overflow-y-auto px-6 pt-6 md:px-10 md:pt-8" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
             {draftRestored && (
               <p className="flex items-center justify-between gap-2 text-lg text-(color:--ink)">
-                <span>Черновик восстановлен</span>
+                <span>{t("entry.draftRestored")}</span>
                 <button type="button" onClick={discardDraft} className="rounded-sm px-1 text-(color:--ink-soft) underline">
-                  Сбросить
+                  {t("entry.draftDiscard")}
                 </button>
               </p>
             )}
 
             <label htmlFor={bodyId} className="sr-only">
-              Запись дня
+              {t("entry.bodyLabel")}
             </label>
             {/* Никаких рамок и обводок, в том числе при фокусе */}
             <textarea
@@ -480,7 +477,11 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
               id={bodyId}
               rows={3}
               value={form.body}
-              placeholder={T.placeholder}
+              placeholder={t("entry.placeholder")}
+              spellCheck={true}
+              autoCorrect="on"
+              autoComplete="on"
+              autoCapitalize="sentences"
               onChange={(e) => {
                 setConfirmDelete(false);
                 setForm((f) => ({ ...f, body: e.target.value }));
@@ -495,25 +496,25 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
                 <div className="flex items-center gap-3">
                   {picker.room > 0 && (
                     <>
-                      <SketchIconButton icon="gallery" label="Добавить фото из галереи" onClick={picker.openGallery} disabled={!canAddPhoto} />
-                      <SketchIconButton icon="camera" label="Сделать фото" onClick={() => setCameraOpen(true)} disabled={!canAddPhoto} />
+                      <SketchIconButton icon="gallery" label={t("entry.addGallery")} onClick={picker.openGallery} disabled={!canAddPhoto} />
+                      <SketchIconButton icon="camera" label={t("entry.addCamera")} onClick={() => setCameraOpen(true)} disabled={!canAddPhoto} />
                     </>
                   )}
                   {items.length > 0 && (
-                    <span className="font-mono text-sm tabular-nums text-(color:--ink)" aria-label={`Фото: ${items.length} из ${picker.max}`}>
+                    <span className="font-mono text-sm tabular-nums text-(color:--ink)" aria-label={t("entry.photoCount", { count: items.length, max: picker.max })}>
                       {items.length}/{picker.max}
                     </span>
                   )}
-                  {photoBusy && <span className="font-mono text-sm text-(color:--ink)">обрабатываю…</span>}
+                  {photoBusy && <span className="font-mono text-sm text-(color:--ink)">{t("entry.processing")}</span>}
                   {/* Скрытые поля выбора файлов для галереи */}
                   {picker.inputs}
                 </div>
 
                 {items.length > 0 && (
-                  <ul className="-mx-6 flex gap-3 overflow-x-auto px-6 pb-1 pt-2" aria-label="Прикреплённые фото">
+                  <ul className="-mx-6 flex gap-3 overflow-x-auto px-6 pb-1 pt-2 md:-mx-10 md:px-10" aria-label={t("entry.attached")}>
                     {items.map((item, i) => {
                       const ref = item.kind !== "new" ? refById.get(item.ref.id) : undefined;
-                      const alt = `Фото ${i + 1} из ${items.length}`;
+                      const alt = t("entry.photoN", { index: i + 1, total: items.length });
                       return (
                         <li key={item.ref.id} className="relative shrink-0">
                           <div className="size-20 overflow-hidden rounded-xl [&>*]:h-full [&>*]:w-full" style={{ backgroundColor: BG_RAISED }}>
@@ -522,7 +523,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
                           {/* Обычный крестик в углу миниатюры */}
                           <button
                             type="button"
-                            aria-label={`Убрать фото ${i + 1}`}
+                            aria-label={t("entry.removePhoto", { index: i + 1 })}
                             disabled={saving}
                             onClick={() => removePhoto(item.ref.id)}
                             className="absolute -right-2 -top-2 grid size-7 place-items-center rounded-full bg-black/70 text-lg leading-none text-white active:scale-90 disabled:opacity-40"
@@ -544,11 +545,11 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
             )}
 
             {existing && confirmDelete && (
-              <div role="group" aria-label="Подтверждение удаления" className="rounded-2xl p-4" style={{ backgroundColor: BG_RAISED }}>
-                <p className="mb-3 text-xl text-(color:--ink-soft)">Текст пустой. Удалить запись за {formatShort(date)}? Растение снова станет семенем.</p>
+              <div role="group" aria-label={t("entry.confirmAria")} className="rounded-2xl p-4" style={{ backgroundColor: BG_RAISED }}>
+                <p className="mb-3 text-xl text-(color:--ink-soft)">{t("entry.confirmDelete", { date: formatDayShort(date, lang) })}</p>
                 <div className="flex gap-2">
                   <Button variant="danger" onClick={remove}>
-                    Удалить
+                    {t("common.delete")}
                   </Button>
                   <Button
                     variant="secondary"
@@ -557,7 +558,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
                       textRef.current?.focus();
                     }}
                   >
-                    Не удалять
+                    {t("entry.keep")}
                   </Button>
                 </div>
               </div>
@@ -568,7 +569,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
         {/* Цветок и настроение: показываются только перед сохранением */}
         {step === "mood" && (
           <div
-            className="absolute inset-0 z-10 flex flex-col justify-end bg-black/50"
+            className="absolute inset-0 z-10 flex flex-col justify-end bg-black/50 md:overflow-hidden md:rounded-3xl"
             onClick={(e) => {
               if (e.target === e.currentTarget) setStep("write");
             }}
@@ -576,12 +577,12 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
             <div
               role="group"
               aria-labelledby={sheetTitleId}
-              className="rounded-t-3xl px-6 pt-3 shadow-sheet sm:rounded-b-lg"
+              className="rounded-t-3xl px-6 pt-3 shadow-sheet sm:rounded-b-lg md:px-10"
               style={{ backgroundColor: BG_RAISED, paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
             >
               <div className="mx-auto h-1 w-10 rounded-full bg-(--ink)/40" aria-hidden="true" />
               <p id={sheetTitleId} className="mx-auto mt-5 max-w-[16rem] text-center text-2xl leading-8 text-(color:--ink-soft)">
-                {T.moodTitle}
+                {t("entry.moodTitle")}
               </p>
               <div className="grid h-60 place-items-center">
                 <MoodFlower mood={form.mood} shapeId={shapeId} className="h-48 w-auto" />
@@ -591,7 +592,7 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
               </div>
               <div className="mt-6 flex justify-center">
                 <SketchDoneButton ref={sheetDoneRef} disabled={saving}>
-                  {T.done}
+                  {t("entry.done")}
                 </SketchDoneButton>
               </div>
             </div>

@@ -1,13 +1,19 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
+/* Приложение только ночное: тема не переключается. color-scheme делает тёмными встроенные элементы браузера
+   (выбор даты, выпадающие списки, поля ввода), а фон задан прямо, без зависимости от токенов темы. */
+:root {
+  color-scheme: dark;
+}
+
 html {
-  background: var(--bg);
+  background: #02001a;
   -webkit-text-size-adjust: 100%;
 }
 
 body {
-  background: var(--bg);
+  background: #02001a;
   color: var(--text);
   font-family: var(--font-default);
   font-size: var(--text-base);

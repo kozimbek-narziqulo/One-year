@@ -26,21 +26,22 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
-  // Приложение сейчас только тёмное, поэтому цвет один.
+  // Приложение только ночное: встроенные элементы браузера (календарь, меню, полосы) тоже тёмные.
+  colorScheme: "dark",
   themeColor: "#02001a",
 };
 
-// Выставляет тему и палитры до первой отрисовки, чтобы не было вспышки светлого экрана.
-const THEME_SCRIPT = `try{var s=JSON.parse(localStorage.getItem("garden:v1:settings")||"{}"),r=document.documentElement;
-if(s.theme==="light"||s.theme==="dark")r.setAttribute("data-theme",s.theme);
+// Выставляет палитры и язык до первой отрисовки. Тема не выбирается: она всегда тёмная (data-theme="dark" ниже).
+const BOOT_SCRIPT = `try{var s=JSON.parse(localStorage.getItem("garden:v1:settings")||"{}"),r=document.documentElement;
+if(s.language==="ru"||s.language==="en"||s.language==="es")r.setAttribute("lang",s.language);
 if(s.moodPalette==="cvd")r.setAttribute("data-mood-palette","cvd");
 if(s.plantPalette==="autumn"||s.plantPalette==="ink")r.setAttribute("data-plant-palette",s.plantPalette)}catch(e){}`;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="ru" className={caveat.variable} suppressHydrationWarning>
+    <html lang="ru" data-theme="dark" className={caveat.variable} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        <script dangerouslySetInnerHTML={{ __html: BOOT_SCRIPT }} />
       </head>
       <body>
         {children}

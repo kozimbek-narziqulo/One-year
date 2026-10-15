@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { compareKeys, formatShort, type DateKey } from "../lib/date.ts";
+import { compareKeys, type DateKey } from "../lib/date.ts";
 import { itemsOf, saveEntryWithPhotos } from "../lib/entryPhotos.ts";
+import { errorText, formatDayShort, type Translate } from "../lib/i18n.ts";
 import type { PhotoStore } from "../lib/photos.ts";
 import type { EntryMap, Repo } from "../lib/repo.ts";
 import { GardenError, LIMITS, photosOf, type Entry } from "../lib/types.ts";
 import { FeedPhoto } from "./FeedPhoto.tsx";
+import { useT } from "./I18nProvider.tsx";
 import { PhotoLightbox } from "./PhotoLightbox.tsx";
 import { PhotoStack, type StackPhoto } from "./PhotoStack.tsx";
 import { resolveShapeId } from "./SketchUI.tsx";
@@ -24,13 +26,13 @@ const LONG_PRESS_MS = 500;
 /** Если палец сдвинулся дальше этого, это прокрутка или свайп, а не долгое нажатие. */
 const MOVE_TOLERANCE_PX = 10;
 
-function photoErrorText(e: unknown): string {
+function photoErrorText(t: Translate, e: unknown): string {
   if (e instanceof GardenError) {
-    if (e.code === "quota") return "Не удалось сохранить изменения: на телефоне кончилось место.";
-    if (e.code === "unavailable") return "Не удалось записать изменения в хранилище браузера.";
-    return e.message;
+    if (e.code === "quota") return t("feed.photoQuota");
+    if (e.code === "unavailable") return t("feed.photoUnavailable");
+    return errorText(t, e) ?? t("feed.photoDeleteFailed");
   }
-  return "Не удалось удалить фото.";
+  return t("feed.photoDeleteFailed");
 }
 
 /** Гасит касания и клики, чтобы они не доходили до записи (редактор) и до экрана (свайп «Сегодня» / «Сад»). */
@@ -59,6 +61,7 @@ function LongPressPhoto({
   onDelete: () => void;
   children: ReactNode;
 }) {
+  const { t } = useT();
   const timer = useRef<number | undefined>(undefined);
   const start = useRef<{ x: number; y: number } | null>(null);
   /** Удержание сработало: ближайший click нужно проглотить. */
@@ -107,12 +110,12 @@ function LongPressPhoto({
       ref={rootRef}
       className="relative size-full select-none [-webkit-touch-callout:none]"
       onTouchStart={(e) => {
-        const t = e.touches[0];
-        if (t) begin(t.clientX, t.clientY);
+        const touch = e.touches[0];
+        if (touch) begin(touch.clientX, touch.clientY);
       }}
       onTouchMove={(e) => {
-        const t = e.touches[0];
-        if (t) move(t.clientX, t.clientY);
+        const touch = e.touches[0];
+        if (touch) move(touch.clientX, touch.clientY);
       }}
       onTouchEnd={clear}
       onTouchCancel={clear}
@@ -155,7 +158,7 @@ function LongPressPhoto({
         <button
           type="button"
           data-delete-photo
-          aria-label="Удалить фото"
+          aria-label={t("feed.deletePhotoAria")}
           onClick={(e) => {
             e.stopPropagation();
             e.preventDefault();
@@ -166,7 +169,7 @@ function LongPressPhoto({
           <svg viewBox="0 0 20 20" className="size-4" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" aria-hidden="true" focusable={false}>
             <path d="M5 5.2c3.3 3.2 6.6 6.3 10 9.6M14.8 5c-3.2 3.4-6.4 6.7-9.6 10" />
           </svg>
-          Удалить
+          {t("common.delete")}
         </button>
       )}
     </div>
@@ -179,6 +182,7 @@ function LongPressPhoto({
  * Кнопок добавления и постоянных крестиков здесь нет: добавлять фото можно в редакторе.
  */
 function EntryPhotos({ entry, repo, store }: { entry: Entry; repo: Repo; store: PhotoStore }) {
+  const { t, lang } = useT();
   const photos = useMemo(() => photosOf(entry), [entry]);
   const refById = useMemo(() => new Map(photos.map((p) => [p.id, p] as const)), [photos]);
   const [lightboxId, setLightboxId] = useState<string | null>(null);
@@ -187,10 +191,13 @@ function EntryPhotos({ entry, repo, store }: { entry: Entry; repo: Repo; store: 
   const [error, setError] = useState<string | null>(null);
 
   const n = photos.length;
-  const stack = useMemo<StackPhoto[]>(
-    () => photos.map((p, i) => ({ id: p.id, alt: `Фото к записи за ${formatShort(entry.date)}${n > 1 ? `, ${i + 1} из ${n}` : ""}` })),
-    [photos, entry.date, n],
-  );
+  const stack = useMemo<StackPhoto[]>(() => {
+    const date = formatDayShort(entry.date, lang);
+    return photos.map((p, i) => ({
+      id: p.id,
+      alt: n > 1 ? t("feed.photoAltN", { date, index: i + 1, total: n }) : t("feed.photoAlt", { date }),
+    }));
+  }, [photos, entry.date, n, t, lang]);
   const lightboxPhoto = lightboxId ? stack.find((p) => p.id === lightboxId) : undefined;
 
   // Если выделенное фото исчезло (удалили или запись обновилась), кнопку прячем.
@@ -214,7 +221,7 @@ function EntryPhotos({ entry, repo, store }: { entry: Entry; repo: Repo; store: 
         items: itemsOf(latest).filter((item) => item.ref.id !== id),
       });
     } catch (e) {
-      setError(photoErrorText(e));
+      setError(photoErrorText(t, e));
     } finally {
       setSaving(false);
     }
@@ -258,18 +265,19 @@ function EntryPhotos({ entry, repo, store }: { entry: Entry; repo: Repo; store: 
       )}
 
       <p role="status" className="sr-only">
-        {saving ? "Удаляю фото…" : ""}
+        {saving ? t("feed.deletingPhoto") : ""}
       </p>
     </>
   );
 }
 
 export function MemoryFeed({ entries, repo, store, onOpen }: MemoryFeedProps) {
+  const { t, lang } = useT();
   const [limit, setLimit] = useState<number>(LIMITS.feedPageSize);
   const list = useMemo(() => Object.values(entries).sort((a, b) => compareKeys(b.date, a.date)), [entries]);
 
   if (list.length === 0) {
-    return <p className="p-4 text-base">В ленте пока пусто. Записи появятся здесь.</p>;
+    return <p className="p-4 text-base">{t("feed.empty")}</p>;
   }
 
   const shown = list.slice(0, limit);
@@ -294,12 +302,12 @@ export function MemoryFeed({ entries, repo, store, onOpen }: MemoryFeedProps) {
                 </p>
               ) : (
                 <button type="button" onClick={() => onOpen(entry.date)} className="font-entry text-entry text-text-muted">
-                  Написать пару слов…
+                  {t("feed.writeSomething")}
                 </button>
               )}
               {/* Невидимая кнопка только для клавиатуры и скринридера */}
               <button type="button" className="sr-only" onClick={() => onOpen(entry.date)}>
-                {`Изменить запись за ${formatShort(entry.date)}`}
+                {t("entry.editDay", { date: formatDayShort(entry.date, lang) })}
               </button>
               <EntryPhotos entry={entry} repo={repo} store={store} />
             </article>
@@ -309,11 +317,9 @@ export function MemoryFeed({ entries, repo, store, onOpen }: MemoryFeedProps) {
       {list.length > shown.length && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button variant="secondary" onClick={() => setLimit((l) => l + LIMITS.feedPageSize)}>
-            Показать ещё
+            {t("feed.more")}
           </Button>
-          <span className="text-sm tabular-nums text-text-muted">
-            Показано {shown.length} из {list.length}
-          </span>
+          <span className="text-sm tabular-nums text-text-muted">{t("feed.shown", { shown: shown.length, total: list.length })}</span>
         </div>
       )}
     </div>

@@ -3,8 +3,9 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { getPhotoStore, getRepo, useGardenState, useToday } from "../hooks/useGarden.ts";
 import { APP_NAME } from "../lib/brand.ts";
-import { compareKeys, daysElapsed, daysInYear, formatShort, yearOf, type DateKey } from "../lib/date.ts";
+import { compareKeys, daysElapsed, daysInYear, yearOf, type DateKey } from "../lib/date.ts";
 import { shiftKey } from "../lib/dayKeys.ts";
+import { formatDayShort } from "../lib/i18n.ts";
 import { referencedPhotoIds } from "../lib/photos.ts";
 import { shouldNudgeBackup } from "../lib/repo.ts";
 import { LIMITS, type Entry, type PlantInfo } from "../lib/types.ts";
@@ -12,6 +13,7 @@ import { BackupPanel } from "./BackupPanel.tsx";
 import { EntryModal } from "./EntryModal.tsx";
 import { GardenDots } from "./GardenDots.tsx";
 import { IconFlower, IconGardenGroup } from "./GardenIcons.tsx";
+import { I18nProvider, useT } from "./I18nProvider.tsx";
 import { MemoryFeed } from "./MemoryFeed.tsx";
 import { MOOD_TONE } from "./MoodFlower.tsx";
 import { PlantSketch, resolveShapeId } from "./SketchUI.tsx";
@@ -27,7 +29,6 @@ const SWIPE_COMMIT_SPEED = 0.5; // px/мс
 const SWIPE_COMMIT_MIN_PX = 30;
 // За краем (с «Сегодня» вправо, с «Сада» влево) страница тянется туго, как в iOS.
 const SWIPE_EDGE_RESISTANCE = 0.25;
-const APP_BG = "#02001a";
 
 type View = "today" | "garden" | "feed";
 
@@ -87,18 +88,19 @@ function PlantButton({ label, onClick }: { label: string; onClick: () => void })
   );
 }
 
-/** Небольшая кнопка «Today →» в правом верхнем углу: возвращает к сегодняшнему дню. */
+/** Небольшая кнопка «Сегодня →» в правом верхнем углу: возвращает к сегодняшнему дню. */
 function TodayButton({ dimmed, onClick }: { dimmed: boolean; onClick: () => void }) {
+  const { t } = useT();
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label="Перейти к сегодняшнему дню"
+      aria-label={t("nav.todayGo")}
       className={`flex min-h-11 items-center gap-1 rounded-full px-3 font-mono text-sm text-[#9a85ff] transition-[opacity,transform] duration-(--duration-fast) active:scale-95 ${
         dimmed ? "opacity-40" : "opacity-100"
       }`}
     >
-      Today
+      {t("common.today")}
       <span aria-hidden="true">→</span>
     </button>
   );
@@ -135,12 +137,14 @@ const StripDay = memo(function StripDay({
   onSelect: (key: DateKey) => void;
   onOpen: (key: DateKey) => void;
 }) {
+  const { t, lang } = useT();
+  const label = `${dayKey === today ? `${t("common.today")}, ` : ""}${formatDayShort(dayKey, lang)}${t(plant ? "garden.hasEntry" : "garden.noEntry")}`;
   return (
     <li className="aspect-square w-[calc(100%/7)] shrink-0 snap-center">
       <button
         type="button"
         onClick={() => (isSelected ? onOpen(dayKey) : onSelect(dayKey))}
-        aria-label={`${dayKey === today ? "Сегодня, " : ""}${formatShort(dayKey)}${plant ? ", есть запись" : ", записи нет"}`}
+        aria-label={label}
         aria-current={isSelected ? "date" : undefined}
         className="grid size-full place-items-center rounded-full"
       >
@@ -171,10 +175,11 @@ function DayStrip({
   onSelect: (key: DateKey) => void;
   onOpen: (key: DateKey) => void;
 }) {
+  const { t, lang } = useT();
   const scrollerRef = useRef<HTMLUListElement>(null);
   const placed = useRef(false);
   const settleTimer = useRef<number | undefined>(undefined);
-  // Идёт прокрутка, начатая кодом (первая посадка, тап по дню, доводка, «Today»): выбор из неё не вычисляем.
+  // Идёт прокрутка, начатая кодом (первая посадка, тап по дню, доводка, «Сегодня»): выбор из неё не вычисляем.
   const programmatic = useRef(true);
   // Идёт прокрутка пальцем: пока она не затихла, ленту не подтягиваем к центру.
   const userScroll = useRef(false);
@@ -206,7 +211,7 @@ function DayStrip({
     }
   }
 
-  // Подводим выбранный день к центру, если выбор пришёл не от пальца (тап, первая посадка, «Today», смена суток).
+  // Подводим выбранный день к центру, если выбор пришёл не от пальца (тап, первая посадка, «Сегодня», смена суток).
   useLayoutEffect(() => {
     const box = scrollerRef.current;
     if (!box) return;
@@ -245,9 +250,9 @@ function DayStrip({
   }
 
   return (
-    <div className="pt-1">
+    <div className="mx-auto w-full pt-1 md:max-w-xl">
       <h1 className="mb-2 text-center font-mono text-base" aria-live="polite">
-        {selected === today ? "Сегодня" : formatShort(selected)}
+        {selected === today ? t("common.today") : formatDayShort(selected, lang)}
       </h1>
       <div className="relative">
         {/* Неподвижная рамка по центру: дни проезжают под ней */}
@@ -257,7 +262,7 @@ function DayStrip({
         />
         <ul
           ref={scrollerRef}
-          aria-label="Дни"
+          aria-label={t("strip.aria")}
           onScroll={onScroll}
           onPointerDown={(e) => {
             e.stopPropagation();
@@ -297,11 +302,27 @@ function Skeleton() {
 
 /* ---------- главный компонент ---------- */
 
+type GardenState = NonNullable<ReturnType<typeof useGardenState>>;
+
+/**
+ * Внешний слой: ждёт загрузки хранилища и подключает язык из настроек.
+ * Хук useT() работает только внутри провайдера, поэтому весь экран вынесен в GardenScreen.
+ */
 export function GardenApp() {
   const state = useGardenState();
+  if (!state) return <Skeleton />;
+  return (
+    <I18nProvider lang={state.settings.language}>
+      <GardenScreen state={state} />
+    </I18nProvider>
+  );
+}
+
+function GardenScreen({ state }: { state: GardenState }) {
+  const { t, lang } = useT();
   const today = useToday();
-  const repo = state ? getRepo() : null;
-  const photoStore = state ? getPhotoStore() : null;
+  const repo = getRepo();
+  const photoStore = getPhotoStore();
 
   const [view, setView] = useState<View>("today");
   const [viewYear, setViewYear] = useState<number | null>(null);
@@ -319,65 +340,32 @@ export function GardenApp() {
   const [peek, setPeek] = useState(false);
 
   const year = viewYear ?? (today ? yearOf(today) : null);
-  const settings = state?.settings;
+  const { moodPalette, plantPalette } = state.settings;
 
+  // Палитры настроения и растений. Тема всегда тёмная: она задана в layout.tsx (data-theme="dark") и globals.css.
   useEffect(() => {
-    if (!settings) return;
     const root = document.documentElement;
-    root.setAttribute("data-theme", "dark");
-    root.setAttribute("data-mood-palette", settings.moodPalette);
-    root.setAttribute("data-plant-palette", settings.plantPalette);
-  }, [settings]);
+    root.setAttribute("data-mood-palette", moodPalette);
+    root.setAttribute("data-plant-palette", plantPalette);
+  }, [moodPalette, plantPalette]);
 
-  // Полноэкранный тёмный фон до самого верха.
+  // Язык страницы: от него зависят проверка орфографии в поле записи и озвучка скринридера.
   useEffect(() => {
-    const html = document.documentElement;
-    const body = document.body;
-    const prev = {
-      htmlBg: html.style.backgroundColor,
-      bodyBg: body.style.backgroundColor,
-      htmlOverscroll: html.style.overscrollBehaviorX,
-      bodyOverscroll: body.style.overscrollBehaviorX,
-    };
-    html.style.backgroundColor = APP_BG;
-    body.style.backgroundColor = APP_BG;
-    html.style.overscrollBehaviorX = "none";
-    body.style.overscrollBehaviorX = "none";
-    let meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    const created = !meta;
-    const prevTheme = meta?.content;
-    if (!meta) {
-      meta = document.createElement("meta");
-      meta.name = "theme-color";
-      document.head.appendChild(meta);
-    }
-    meta.content = APP_BG;
-    return () => {
-      html.style.backgroundColor = prev.htmlBg;
-      body.style.backgroundColor = prev.bodyBg;
-      html.style.overscrollBehaviorX = prev.htmlOverscroll;
-      body.style.overscrollBehaviorX = prev.bodyOverscroll;
-      if (meta) {
-        if (created) meta.remove();
-        else if (prevTheme !== undefined) meta.content = prevTheme;
-      }
-    };
-  }, []);
+    document.documentElement.lang = lang;
+  }, [lang]);
 
   // iPhone Safari масштабирует щипком даже с user-scalable=no: гасим его gesture-события.
   useEffect(() => {
     const stop = (e: Event) => e.preventDefault();
     const types = ["gesturestart", "gesturechange", "gestureend"] as const;
-    for (const t of types) document.addEventListener(t, stop, { passive: false });
+    for (const type of types) document.addEventListener(type, stop, { passive: false });
     return () => {
-      for (const t of types) document.removeEventListener(t, stop);
+      for (const type of types) document.removeEventListener(type, stop);
     };
   }, []);
 
   // Раз за запуск убираем фото, на которые не ссылается ни одна запись.
-  const ready = state !== null;
   useEffect(() => {
-    if (!ready) return;
     const id = window.setTimeout(() => {
       const store = getPhotoStore();
       const s = getRepo().getState();
@@ -385,31 +373,29 @@ export function GardenApp() {
       void store.sweep(referencedPhotoIds(Object.values(s.entries))).catch(() => undefined);
     }, 3000);
     return () => window.clearTimeout(id);
-  }, [ready]);
+  }, []);
 
   const showToast = useCallback((text: string, opts?: { action?: ToastData["action"]; ms?: number }) => {
     toastId.current += 1;
     setToast({ id: toastId.current, text, action: opts?.action, ms: opts?.ms ?? 4000 });
   }, []);
-  const dismissToast = useCallback((id: number) => setToast((t) => (t && t.id === id ? null : t)), []);
+  const dismissToast = useCallback((id: number) => setToast((cur) => (cur && cur.id === id ? null : cur)), []);
 
   const openDate = useCallback(
     (key: DateKey) => {
       if (today && compareKeys(key, today) > 0) {
-        showToast("Завтра ещё не наступило.");
+        showToast(t("error.future"));
         return;
       }
       setModalDate(key);
     },
-    [today, showToast],
+    [today, showToast, t],
   );
 
   const plants = useMemo<ReadonlyMap<string, PlantInfo>>(() => {
     const map = new Map<string, PlantInfo>();
-    if (state) {
-      for (const e of Object.values(state.entries)) {
-        map.set(e.date, { mood: e.mood, ...(e.shapeId !== undefined ? { shapeId: e.shapeId } : {}) });
-      }
+    for (const e of Object.values(state.entries)) {
+      map.set(e.date, { mood: e.mood, ...(e.shapeId !== undefined ? { shapeId: e.shapeId } : {}) });
     }
     return map;
   }, [state]);
@@ -419,7 +405,7 @@ export function GardenApp() {
 
   const selectDay = useCallback((key: DateKey) => setSelectedDate(key === today ? null : key), [today]);
 
-  /** «Today →»: выбор на сегодня, экран «Сегодня», запись дня прокручена к началу. */
+  /** «Сегодня →»: выбор на сегодня, экран «Сегодня», запись дня прокручена к началу. */
   const goToday = useCallback(() => {
     setSelectedDate(null);
     setView("today");
@@ -429,18 +415,18 @@ export function GardenApp() {
   }, []);
 
   const shownEntries = useMemo(() => {
-    if (!state || !shownDate) return null;
+    if (!shownDate) return null;
     const e = state.entries[shownDate];
     return e ? ({ [shownDate]: e } as typeof state.entries) : null;
   }, [state, shownDate]);
 
   const entryCountThisYear = useMemo(() => {
-    if (!state || year === null) return 0;
+    if (year === null) return 0;
     const prefix = `${year}-`;
     return Object.keys(state.entries).filter((k) => k.startsWith(prefix)).length;
   }, [state, year]);
 
-  if (!state || !repo || !photoStore || !today || year === null) return <Skeleton />;
+  if (!today || year === null) return <Skeleton />;
 
   const elapsed = daysElapsed(year, today);
   const total = daysInYear(year);
@@ -456,21 +442,21 @@ export function GardenApp() {
     if (yearOf(entry.date) !== year) setViewYear(yearOf(entry.date));
     setPlanted(entry.date);
     window.setTimeout(() => setPlanted((p) => (p === entry.date ? null : p)), LIMITS.undoDeleteMs / 5);
-    showToast(wasNew ? "Записано. Растение уже в саду." : "Запись обновлена.");
+    showToast(t(wasNew ? "toast.saved" : "toast.updated"));
     void navigator.storage?.persist?.().catch(() => undefined);
   }
 
   function onDeleted(entry: Entry) {
     setModalDate(null);
-    showToast(`Запись за ${formatShort(entry.date)} удалена.`, {
+    showToast(t("toast.deleted", { date: formatDayShort(entry.date, lang) }), {
       ms: LIMITS.undoDeleteMs,
       action: {
-        label: "Вернуть",
+        label: t("toast.undo"),
         run: () => {
           try {
-            repo?.restoreEntry(entry);
+            repo.restoreEntry(entry);
           } catch {
-            showToast("Не удалось вернуть запись: нет места.");
+            showToast(t("toast.restoreFailed"));
           }
         },
       },
@@ -546,23 +532,25 @@ export function GardenApp() {
     };
   };
 
+  const shownDayShort = formatDayShort(shownDay, lang);
+
   return (
     <>
-      <main className="flex h-dvh flex-col overflow-hidden bg-[#02001a] pt-[env(safe-area-inset-top)] text-[#5b3dff]">
-        {/* Верхняя строка: лента слева; «Today →», копия и настройки справа. */}
+      <main className="relative mx-auto flex h-dvh w-full max-w-3xl flex-col overflow-hidden bg-[#02001a] pt-[env(safe-area-inset-top)] text-[#5b3dff] md:px-4 lg:my-6 lg:h-[calc(100dvh_-_3rem)] lg:rounded-[2rem] lg:border lg:border-[#5b3dff]/20 lg:px-8">
+        {/* Верхняя строка: лента слева; «Сегодня →», копия и настройки справа. */}
         <header className="flex min-h-14 items-center justify-between px-(--layout-gutter)">
           {view === "feed" ? (
             <Button variant="ghost" onClick={() => setView("today")}>
-              Назад
+              {t("nav.back")}
             </Button>
           ) : (
             <Button variant="ghost" onClick={() => setView("feed")}>
-              Лента
+              {t("nav.feed")}
             </Button>
           )}
           <div className="flex items-center gap-1">
             <TodayButton dimmed={atToday} onClick={goToday} />
-            <IconButton label="Копия и настройки" onClick={() => setPanelOpen(true)}>
+            <IconButton label={t("panel.title")} onClick={() => setPanelOpen(true)}>
               <IconSettings />
             </IconButton>
           </div>
@@ -570,23 +558,23 @@ export function GardenApp() {
 
         {!state.persistent && (
           <p role="status" className="mx-(--layout-gutter) mb-3 rounded-md border border-warning p-3 text-sm text-warning">
-            Браузер не сохраняет данные сайта (возможно, приватный режим). Записи пропадут при закрытии вкладки. Сохраните копию файлом.
+            {t("panel.notPersistent")}
           </p>
         )}
         {state.loadProblem && (
           <p role="alert" className="mx-(--layout-gutter) mb-3 rounded-md border border-danger p-3 text-sm text-danger">
-            Часть сохранённых записей не удалось прочитать. Исходный текст отложен в хранилище браузера и не стёрт. Сохраните копию и обратитесь за помощью, прежде чем что-то менять.
+            {t("app.loadProblem")}
           </p>
         )}
         {nudge && (
-          <div role="region" aria-label="Напоминание о копии" className="mx-(--layout-gutter) mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md bg-accent-subtle p-3 text-base text-text">
-            <p>Давно не было копии. Сохраните файл, на случай если телефон потеряется.</p>
+          <div role="region" aria-label={t("nudge.aria")} className="mx-(--layout-gutter) mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md bg-accent-subtle p-3 text-base text-text">
+            <p>{t("nudge.text")}</p>
             <div className="flex gap-2">
               <Button variant="primary" onClick={() => setPanelOpen(true)}>
-                Сохранить копию
+                {t("nudge.save")}
               </Button>
               <Button variant="ghost" onClick={() => repo.snoozeBackupNudge()}>
-                Позже
+                {t("nudge.later")}
               </Button>
             </div>
           </div>
@@ -594,8 +582,8 @@ export function GardenApp() {
 
         {view === "feed" ? (
           <section className="h-full min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-(--layout-gutter) pb-32 text-text [-webkit-overflow-scrolling:touch]">
-            <h1 className="mb-1 text-xl">Лента воспоминаний</h1>
-            <p className="mb-4 text-sm tabular-nums text-text-muted">Записей: {Object.keys(state.entries).length}</p>
+            <h1 className="mb-1 text-xl">{t("feed.title")}</h1>
+            <p className="mb-4 text-sm tabular-nums text-text-muted">{t("feed.count", { count: Object.keys(state.entries).length })}</p>
             <MemoryFeed entries={state.entries} repo={repo} store={photoStore} onOpen={openDate} />
           </section>
         ) : (
@@ -625,7 +613,7 @@ export function GardenApp() {
                       <button
                         type="button"
                         onClick={() => openDate(shownDay)}
-                        aria-label={shownDay === today ? "Изменить запись за сегодня" : `Изменить запись за ${formatShort(shownDay)}`}
+                        aria-label={shownDay === today ? t("entry.editToday") : t("entry.editDay", { date: shownDayShort })}
                         className="mx-auto mb-4 grid size-36 place-items-center rounded-full transition-transform duration-(--duration-fast) active:scale-95"
                       >
                         <StripPlant
@@ -639,7 +627,7 @@ export function GardenApp() {
                     </div>
                   ) : (
                     <div className="grid flex-1 place-items-center">
-                      <PlantButton label={shownDay === today ? "Посадить воспоминание" : `Записать ${formatShort(shownDay)}`} onClick={() => openDate(shownDay)} />
+                      <PlantButton label={shownDay === today ? t("today.plant") : t("today.writeDay", { date: shownDayShort })} onClick={() => openDate(shownDay)} />
                     </div>
                   )}
                 </div>
@@ -647,12 +635,12 @@ export function GardenApp() {
 
               {/* Экран «Сад»: полотно точек */}
               <section className="h-full w-1/2 overflow-y-auto overscroll-y-contain px-(--layout-gutter) pb-32 pt-2 [-webkit-overflow-scrolling:touch]" style={pageStyle(view === "garden")}>
-                {Object.keys(state.entries).length === 0 && <p className="mb-4 text-center font-mono text-sm">Пока здесь одни семена. Начнём с сегодняшнего дня?</p>}
+                {Object.keys(state.entries).length === 0 && <p className="mb-4 text-center font-mono text-sm">{t("garden.empty")}</p>}
 
                 <GardenDots year={year} today={today} plants={plants} plantedKey={planted} onOpen={openDate} />
 
                 <p className="mt-6 text-center font-mono text-xs tabular-nums opacity-70">
-                  Записей: {entryCountThisYear} из {total} · прошло {elapsed} дн.
+                  {t("garden.stats", { count: entryCountThisYear, total, elapsed })}
                 </p>
               </section>
             </div>
@@ -660,12 +648,12 @@ export function GardenApp() {
         )}
 
         {/* Нижняя панель: «Сегодня» слева, «Сад» справа, как и сами экраны. */}
-        <nav aria-label="Разделы" className="pointer-events-none fixed inset-x-0 bottom-0 z-10 flex justify-center pb-[max(1rem,env(safe-area-inset-bottom))]">
+        <nav aria-label={t("nav.aria")} className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center pb-[max(1rem,env(safe-area-inset-bottom))] lg:pb-5">
           <div className="pointer-events-auto flex gap-1 rounded-3xl border border-[#5b3dff]/30 bg-[#16103f]/80 p-1.5 backdrop-blur">
-            <NavButton active={view === "today"} label="Сегодня" onClick={() => setView("today")}>
+            <NavButton active={view === "today"} label={t("common.today")} onClick={() => setView("today")}>
               <IconFlower className="size-9" />
             </NavButton>
-            <NavButton active={view === "garden"} label="Сад" onClick={() => setView("garden")}>
+            <NavButton active={view === "garden"} label={t("nav.garden")} onClick={() => setView("garden")}>
               <IconGardenGroup className="h-8 w-14" />
             </NavButton>
           </div>
@@ -684,7 +672,7 @@ export function GardenApp() {
           onDeleted={onDeleted}
         />
       )}
-      {panelOpen && <BackupPanel repo={repo} photoStore={photoStore} state={state} onClose={() => setPanelOpen(false)} onMessage={(t) => showToast(t, { ms: 6000 })} />}
+      {panelOpen && <BackupPanel repo={repo} photoStore={photoStore} state={state} onClose={() => setPanelOpen(false)} onMessage={(text) => showToast(text, { ms: 6000 })} />}
       <Toast toast={toast} onDismiss={dismissToast} />
     </>
   );
