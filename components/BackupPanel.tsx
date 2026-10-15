@@ -18,6 +18,7 @@ import { applyImportWithPhotos, backupFilename, buildBackupZip, planImport, read
 import { downloadBlob } from "../lib/download.ts";
 import { formatShort } from "../lib/date.ts";
 import { errorText } from "../lib/i18n.ts";
+import { useT } from "./I18nProvider.tsx";
 import type { PhotoStore } from "../lib/photos.ts";
 import { photosOf } from "../lib/types.ts";
 import type { GardenState, Repo } from "../lib/repo.ts";
