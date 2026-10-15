@@ -22,7 +22,6 @@ import { useT } from "./I18nProvider.tsx";
 import type { PhotoStore } from "../lib/photos.ts";
 import { photosOf } from "../lib/types.ts";
 import type { GardenState, Repo } from "../lib/repo.ts";
-import { useT } from "./I18nProvider.tsx";
 import { Button, IconButton, IconClose } from "./ui.tsx";
 
 export interface BackupPanelProps {
