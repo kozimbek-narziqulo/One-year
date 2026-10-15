@@ -28,7 +28,7 @@ function Row({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex min-h-(--layout-tapMin) items-center justify-between gap-3 px-4 text-base">
       <span>{label}</span>
-      <span className="text-text-muted">{value}</span>
+      <span className="text-[#9a85ff]">{value}</span>
     </div>
   );
 }
@@ -144,18 +144,20 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
       onClick={(e) => {
         if (e.target === dialogRef.current) dialogRef.current?.close();
       }}
-      className="entry-dialog fixed m-0 h-auto max-h-[92dvh] w-full max-w-none overflow-hidden border-0 bg-transparent p-0 text-text sm:m-auto sm:max-w-(--layout-modalMax)"
+      className="entry-dialog fixed m-0 h-auto max-h-[92dvh] w-full max-w-none overflow-hidden border-0 bg-transparent p-0 text-[#f1ecff] sm:m-auto sm:max-w-(--layout-modalMax)"
     >
-      <div className="flex max-h-[92dvh] flex-col rounded-t-[28px] border border-border bg-surface-raised shadow-sheet sm:rounded-[28px] sm:shadow-md">
-        <div aria-hidden="true" className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-border-input sm:hidden" />
+      <div className="flex max-h-[92dvh] flex-col rounded-t-[28px] border border-[#5b3dff]/30 bg-[#02001a] shadow-sheet sm:rounded-[28px] sm:shadow-md">
+        <div aria-hidden="true" className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-[#5b3dff]/50 sm:hidden" />
 
         <div className="flex shrink-0 items-center justify-between gap-2 px-5 pb-1 pt-3">
-          <h2 id={titleId} className="text-xl font-semibold">
+          <h2 id={titleId} className="text-xl font-semibold text-[#f1ecff]">
             {t("panel.title")}
           </h2>
-          <IconButton label={t("common.close")} onClick={() => dialogRef.current?.close()}>
-            <IconClose />
-          </IconButton>
+          <div className="[&_button]:text-[#c9bcff] [&_button:hover]:text-white [&_svg]:text-[#c9bcff]">
+            <IconButton label={t("common.close")} onClick={() => dialogRef.current?.close()}>
+              <IconClose />
+            </IconButton>
+          </div>
         </div>
 
         <div className="space-y-5 overflow-y-auto px-4 pb-6 pt-3">
@@ -167,25 +169,25 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
 
           {/* Статистика */}
           <div className="space-y-2">
-            <div className="divide-y divide-border overflow-hidden rounded-2xl bg-surface">
+            <div className="divide-y divide-[#5b3dff]/30 overflow-hidden rounded-2xl bg-[#16103f]">
               <Row label={t("backup.statEntries")} value={count} />
               {photoTotal > 0 && <Row label={t("backup.statPhotos")} value={photoTotal} />}
               <Row label={t("backup.statLast")} value={state.meta.lastBackupAt ? formatDateFull(state.meta.lastBackupAt, lang) : t("backup.never")} />
             </div>
             {state.meta.changesSinceBackup > 0 && (
-              <p className="px-2 text-sm text-text-muted">{t("backup.changes", { count: state.meta.changesSinceBackup })}</p>
+              <p className="px-2 text-sm text-[#9a85ff]">{t("backup.changes", { count: state.meta.changesSinceBackup })}</p>
             )}
           </div>
 
           {/* Язык */}
-          <div className="overflow-hidden rounded-2xl bg-surface">
+          <div className="overflow-hidden rounded-2xl bg-[#16103f]">
             <div className="flex min-h-(--layout-tapMin) items-center justify-between gap-3 px-4 text-base">
               <label htmlFor={langId}>{t("lang.title")}</label>
               <select
                 id={langId}
                 value={lang}
                 onChange={(e) => changeLanguage(e.target.value as Language)}
-                className="min-h-(--layout-tapMin) cursor-pointer bg-transparent text-right text-base text-text-muted"
+                className="min-h-(--layout-tapMin) cursor-pointer bg-transparent text-right text-base text-[#9a85ff] [color-scheme:dark]"
               >
                 {LANGUAGES.map((code) => (
                   <option key={code} value={code}>
@@ -217,7 +219,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
           />
 
           {progress && (
-            <p role="status" className="text-center text-sm text-text-muted">
+            <p role="status" className="text-center text-sm text-[#9a85ff]">
               {progress}
             </p>
           )}
@@ -253,7 +255,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
                 </p>
               )}
 
-              <fieldset className="divide-y divide-border overflow-hidden rounded-2xl bg-surface">
+              <fieldset className="divide-y divide-[#5b3dff]/30 overflow-hidden rounded-2xl bg-[#16103f]">
                 <legend className="sr-only">{t("import.howTitle")}</legend>
                 {(["merge", "replace"] as const).map((value) => (
                   <label key={value} className="flex min-h-(--layout-tapMin) items-center gap-3 px-4 text-base">
@@ -263,7 +265,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
                 ))}
               </fieldset>
 
-              <p className="px-2 text-sm text-text-muted" aria-live="polite">
+              <p className="px-2 text-sm text-[#9a85ff]" aria-live="polite">
                 {sentence(
                   t("import.plan", { added: plan.added, updated: plan.updated, unchanged: plan.unchanged }),
                   plan.photosAdded > 0 && t("import.planPhotos", { count: plan.photosAdded }),
