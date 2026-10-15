@@ -19,7 +19,7 @@ import { createPhotoStore, type PhotoRecord, type PhotoStore } from "../lib/phot
 import { createRepo, type Repo } from "../lib/repo.ts";
 import { memoryStorage } from "../lib/storage.ts";
 import { todayKey } from "../lib/date.ts";
-import { GardenError, type Entry } from "../lib/types.ts";
+import { DEFAULT_SETTINGS, GardenError, type Entry, type PhotoRef } from "../lib/types.ts";
 import { createZip, openZip, type ZipEntry } from "../lib/zip.ts";
 
 const NOW = new Date(2026, 9, 11, 12, 0, 0);
@@ -140,8 +140,9 @@ test("слияние: добавляются только недостающие
 });
 
 test("запись с тем же текстом, но другими фото считается изменённой и выигрывает более свежая", async () => {
-  const cur = { date: day(0), body: "т", mood: null, createdAt: 1, updatedAt: 100, photos: [{ id: "p_aaaaaa_0123456789abcdef", width: 1, height: 1, bytes: 1, mime: "image/webp" as const }] };
-  const other = { ...cur, updatedAt: 200, photos: [{ ...cur.photos[0], id: "p_bbbbbb_0123456789abcdef" }] };
+  const ref: PhotoRef = { id: "p_aaaaaa_0123456789abcdef", width: 1, height: 1, bytes: 1, mime: "image/webp" };
+  const cur: Entry = { date: day(0), body: "т", mood: null, createdAt: 1, updatedAt: 100, photos: [ref] };
+  const other: Entry = { ...cur, updatedAt: 200, photos: [{ ...ref, id: "p_bbbbbb_0123456789abcdef" }] };
   const p1 = planImport({ [cur.date]: cur }, [other], "merge");
   assert.equal(p1.updated, 1);
   assert.deepEqual([p1.photosAdded, p1.photosRemoved], [1, 1]);
@@ -214,7 +215,8 @@ test("повреждённое фото в архиве: запись загру
   const refs = entriesOf(repo).flatMap((e) => e.photos ?? []);
   const victim = z.entries.find((e) => e.name === photoFileName(refs[1] as { id: string; mime: "image/webp" })) as ZipEntry;
   const bytes = await bytesOf(blob);
-  bytes[victim.localOffset + 30 + victim.name.length + 40] ^= 0xff;
+  const at = victim.localOffset + 30 + victim.name.length + 40;
+  bytes[at] = (bytes[at] ?? 0) ^ 0xff;
   const parsed = await readBackupFile(new Blob([bytes]), NOW.getTime());
   const dst = setup();
   const res = await applyImportWithPhotos(dst.repo, dst.store, parsed, "replace", false);
@@ -286,15 +288,16 @@ test("браузер без хранилища фото: записи загру
 
 test("настройки из копии загружаются по желанию", async () => {
   const { repo, store } = await filled();
-  repo.updateSettings({ theme: "dark", density: "compact" });
+  repo.updateSettings({ moodPalette: "cvd", plantPalette: "ink" });
   const { blob } = await buildBackupZip(repo, store, { now: NOW });
   const a = setup();
   await applyImportWithPhotos(a.repo, a.store, await readBackupFile(blob, NOW.getTime()), "replace", false);
-  assert.equal(a.repo.getState().settings.theme, "system");
+  assert.equal(a.repo.getState().settings.moodPalette, DEFAULT_SETTINGS.moodPalette);
+  assert.equal(a.repo.getState().settings.plantPalette, DEFAULT_SETTINGS.plantPalette);
   const b = setup();
   await applyImportWithPhotos(b.repo, b.store, await readBackupFile(blob, NOW.getTime()), "replace", true);
-  assert.equal(b.repo.getState().settings.theme, "dark");
-  assert.equal(b.repo.getState().settings.density, "compact");
+  assert.equal(b.repo.getState().settings.moodPalette, "cvd");
+  assert.equal(b.repo.getState().settings.plantPalette, "ink");
 });
 
 test("архив, перепакованный в папку, с мусором macOS и со сжатием, читается", async () => {
@@ -383,7 +386,7 @@ test("поддельная запись в архиве не ломает заг
 test("фото в архиве, на которое записи не ссылаются, игнорируется", async () => {
   const { repo, store } = await filled();
   const { blob } = await buildBackupZip(repo, store, { now: NOW });
-  const extra = await rebuild(blob, (f) => f.set("photos/p_zzzzzz_00000000deadbeef.webp", new Uint8Array(webp() as unknown as ArrayBuffer)));
+  const extra = await rebuild(blob, (f) => f.set("photos/p_zzzzzz_00000000deadbeef.webp", new Uint8Array(64)));
   const dst = setup();
   const res = await applyImportWithPhotos(dst.repo, dst.store, await readBackupFile(extra, NOW.getTime()), "replace", false);
   assert.equal(res.photosWritten, 3);

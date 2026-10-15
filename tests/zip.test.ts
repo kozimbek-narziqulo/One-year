@@ -127,7 +127,8 @@ test("deflate-архив, собранный другим архиватором
 
 test("повреждение данных ловится контрольной суммой", async () => {
   const bytes = await bytesOf(await createZip([{ name: "a.txt", data: "0123456789" }]));
-  bytes[30 + 5 + 3] ^= 0xff; // середина данных
+  const at = 30 + 5 + 3; // середина данных
+  bytes[at] = (bytes[at] ?? 0) ^ 0xff;
   const z = await openZip(new Blob([bytes]));
   await assert.rejects(z.read(z.entries[0] as ZipEntry, 100), /контрольная сумма/);
 });

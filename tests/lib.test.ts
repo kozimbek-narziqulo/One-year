@@ -4,7 +4,7 @@ import { addDays, dayOfYear, formatLong, isValidKey, todayKey, weekdayMon0, year
 import { createRepo, KEYS, shouldNudgeBackup } from "../lib/repo.ts";
 import { memoryStorage } from "../lib/storage.ts";
 import { applyImport, buildBackup, parseBackup, planImport, serializeBackup, BackupError, backupFilename } from "../lib/backup.ts";
-import { GardenError } from "../lib/types.ts";
+import { GardenError, type Entry } from "../lib/types.ts";
 import { plantBounds, plantGeometry, plantSpec, signature } from "../lib/plants.ts";
 
 const at = (iso: string) => () => new Date(iso);
@@ -130,7 +130,7 @@ test("backup: export then import into an empty app restores everything", () => {
   const src = createRepo(memoryStorage(), { now: at("2026-10-11T10:00:00") });
   src.saveEntry({ date: "2026-10-09", body: "раз", mood: 1 });
   src.saveEntry({ date: "2026-10-10", body: "два \"в кавычках\" и\nперенос", mood: null });
-  src.updateSettings({ moodPalette: "cvd", theme: "dark" });
+  src.updateSettings({ moodPalette: "cvd", plantPalette: "autumn" });
   const text = serializeBackup(buildBackup(src, new Date("2026-10-11T10:00:00")));
 
   const dst = createRepo(memoryStorage(), { now: at("2026-10-11T10:00:00") });
@@ -138,6 +138,7 @@ test("backup: export then import into an empty app restores everything", () => {
   assert.equal(plan.added, 2);
   assert.deepEqual(dst.listEntries(), src.listEntries());
   assert.equal(dst.getState().settings.moodPalette, "cvd");
+  assert.equal(dst.getState().settings.plantPalette, "autumn");
 });
 
 test("backup: file name and bad files", () => {
@@ -155,7 +156,7 @@ test("backup: file name and bad files", () => {
 });
 
 test("backup: merge keeps the newer edit, replace mirrors the file", () => {
-  const mk = (date: string, body: string, updatedAt: number) => ({ date, body, mood: null, createdAt: 1, updatedAt });
+  const mk = (date: string, body: string, updatedAt: number): Entry => ({ date, body, mood: null, createdAt: 1, updatedAt });
   const current = { "2026-01-01": mk("2026-01-01", "новее в приложении", 200), "2026-01-02": mk("2026-01-02", "только тут", 100), "2026-01-03": mk("2026-01-03", "старое", 100) };
   const incoming = [mk("2026-01-01", "из файла, старее", 100), mk("2026-01-03", "из файла, новее", 300), mk("2026-01-04", "новая", 100)];
   const m = planImport(current, incoming, "merge");

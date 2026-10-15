@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { applyImportWithPhotos, backupFilename, BackupError, buildBackupZip, planImport, readBackupFile, type ImportMode, type ParsedBackup } from "../lib/backup.ts";
+import { applyImportWithPhotos, backupFilename, buildBackupZip, planImport, readBackupFile, type ImportMode, type ParsedBackup } from "../lib/backup.ts";
 import { downloadBlob } from "../lib/download.ts";
 import { formatShort } from "../lib/date.ts";
+import { errorText, useT } from "../lib/i18n.ts";
 import type { PhotoStore } from "../lib/photos.ts";
-import { GardenError, photosOf, type Density, type MoodPalette, type PlantPalette, type ThemeSetting } from "../lib/types.ts";
+import { GardenError, photosOf, type MoodPalette, type PlantPalette } from "../lib/types.ts";
 import type { GardenState, Repo } from "../lib/repo.ts";
 import { Button, IconButton, IconClose } from "./ui.tsx";
 
@@ -47,6 +48,7 @@ function Select<T extends string>({ label, value, options, onChange }: { label: 
 }
 
 export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: BackupPanelProps) {
+  const t = useT();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
@@ -99,7 +101,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
         setExportNote(`В копию не попало фото: ${r.photosMissing}. Записи на них ссылаются, а самих файлов в этом браузере нет, поэтому в копии они сохранены без этих фото.`);
       }
     } catch (e) {
-      setExportNote(e instanceof BackupError ? e.message : "Не удалось собрать копию. Попробуйте ещё раз.");
+      setExportNote(errorText(t, e) ?? t("backup.failed"));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -118,7 +120,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
       setWithSettings(false);
       setMode("merge");
     } catch (e) {
-      setImportError(e instanceof BackupError ? e.message : "Не удалось прочитать файл.");
+      setImportError(errorText(t, e) ?? t("backup.failed"));
     } finally {
       setBusy(false);
       setProgress(null);
@@ -341,12 +343,6 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
             <h3 id={`${titleId}-look`} className="text-base font-semibold">
               Внешний вид
             </h3>
-            <Select<ThemeSetting>
-              label="Тема"
-              value={state.settings.theme}
-              options={[["system", "Как в системе"], ["light", "Светлая"], ["dark", "Тёмная"]]}
-              onChange={(theme) => setSetting({ theme })}
-            />
             <Select<MoodPalette>
               label="Цвета настроений"
               value={state.settings.moodPalette}
@@ -358,12 +354,6 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
               value={state.settings.plantPalette}
               options={[["default", "Луг"], ["autumn", "Осень"], ["ink", "Тушь"]]}
               onChange={(plantPalette) => setSetting({ plantPalette })}
-            />
-            <Select<Density>
-              label="Размер клеток"
-              value={state.settings.density}
-              options={[["comfortable", "Обычный"], ["compact", "Мелкий"]]}
-              onChange={(density) => setSetting({ density })}
             />
           </section>
         </div>

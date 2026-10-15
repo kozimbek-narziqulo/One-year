@@ -93,10 +93,8 @@ function sanitizeSettings(raw: unknown): Settings {
   const s: Settings = { ...DEFAULT_SETTINGS };
   if (!raw || typeof raw !== "object") return s;
   const r = raw as Record<string, unknown>;
-  if (r.theme === "system" || r.theme === "light" || r.theme === "dark") s.theme = r.theme;
   if (r.moodPalette === "default" || r.moodPalette === "cvd") s.moodPalette = r.moodPalette;
   if (r.plantPalette === "default" || r.plantPalette === "autumn" || r.plantPalette === "ink") s.plantPalette = r.plantPalette;
-  if (r.density === "comfortable" || r.density === "compact") s.density = r.density;
   return s;
 }
 

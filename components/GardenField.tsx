@@ -16,7 +16,7 @@ import {
   type DateKey,
 } from "../lib/date.ts";
 import { moodLabel } from "../lib/moods.ts";
-import type { Density, Entry } from "../lib/types.ts";
+import type { Entry } from "../lib/types.ts";
 import type { EntryMap } from "../lib/repo.ts";
 import { PlantSprite } from "./PlantSprite.tsx";
 
@@ -31,7 +31,6 @@ export interface GardenFieldProps {
   year: number;
   entries: EntryMap;
   today: DateKey;
-  density: Density;
   /** Дата, для которой только что сохранили запись: её растение «вырастает». */
   plantedKey: DateKey | null;
   focusRequest: FocusRequest | null;
@@ -54,15 +53,14 @@ interface CellProps {
   isToday: boolean;
   isFuture: boolean;
   tabbable: boolean;
-  compact: boolean;
   animate: boolean;
   onActivate: (k: DateKey) => void;
   onFocusCell: (k: DateKey) => void;
 }
 
-const Cell = memo(function Cell({ dateKey, entry, isToday, isFuture, tabbable, compact, animate, onActivate, onFocusCell }: CellProps) {
+const Cell = memo(function Cell({ dateKey, entry, isToday, isFuture, tabbable, animate, onActivate, onFocusCell }: CellProps) {
   const p = parseKey(dateKey);
-  const glyphVar = compact ? "var(--garden-compact-glyph)" : "var(--garden-comfortable-glyph)";
+  const glyphVar = "var(--garden-comfortable-glyph)";
   const base =
     "relative flex aspect-square w-full flex-col items-center justify-center rounded-cell border transition-colors duration-(--duration-fast) hover:bg-accent-subtle";
   const skin = isFuture ? "border-transparent bg-transparent" : "border-border bg-surface";
@@ -80,11 +78,9 @@ const Cell = memo(function Cell({ dateKey, entry, isToday, isFuture, tabbable, c
       onFocus={() => onFocusCell(dateKey)}
       className={`${base} ${skin} ${ring}`}
     >
-      {!compact && (
-        <span className={`text-xs leading-none ${isToday ? "font-semibold text-text" : "text-text-muted"}`} aria-hidden="true">
-          {p?.d}
-        </span>
-      )}
+      <span className={`text-xs leading-none ${isToday ? "font-semibold text-text" : "text-text-muted"}`} aria-hidden="true">
+        {p?.d}
+      </span>
       <span className="mt-0.5 grid place-items-center" style={{ width: glyphVar, height: glyphVar }} aria-hidden="true">
         {entry ? (
           <PlantSprite day={dayOfYear(dateKey)} mood={entry.mood} animate={animate} className="size-full" />
@@ -96,8 +92,7 @@ const Cell = memo(function Cell({ dateKey, entry, isToday, isFuture, tabbable, c
   );
 });
 
-export function GardenField({ year, entries, today, density, plantedKey, focusRequest, onOpen }: GardenFieldProps) {
-  const compact = density === "compact";
+export function GardenField({ year, entries, today, plantedKey, focusRequest, onOpen }: GardenFieldProps) {
   const [focusKeyRaw, setFocusKey] = useState<DateKey>(today);
   const pendingFocus = useRef(false);
   const openRef = useRef(onOpen);
@@ -161,7 +156,7 @@ export function GardenField({ year, entries, today, density, plantedKey, focusRe
   }
 
   const months = yearGrid(year);
-  const gap = compact ? "var(--garden-compact-gap)" : "var(--garden-comfortable-gap)";
+  const gap = "var(--garden-comfortable-gap)";
 
   return (
     <div
@@ -196,7 +191,6 @@ export function GardenField({ year, entries, today, density, plantedKey, focusRe
                       isToday={k === today}
                       isFuture={compareKeys(k, today) > 0}
                       tabbable={k === focusKey}
-                      compact={compact}
                       animate={k === plantedKey}
                       onActivate={onActivate}
                       onFocusCell={onFocusCell}
