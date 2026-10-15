@@ -20,10 +20,12 @@ import {
   DEFAULT_SETTINGS,
   GardenError,
   isShapeId,
+  LANGUAGES,
   LIMITS,
   photosOf,
   sanitizePhotoRefs,
   type Entry,
+  type Language,
   type Meta,
   type Mood,
   type PhotoRef,
@@ -95,6 +97,7 @@ function sanitizeSettings(raw: unknown): Settings {
   const r = raw as Record<string, unknown>;
   if (r.moodPalette === "default" || r.moodPalette === "cvd") s.moodPalette = r.moodPalette;
   if (r.plantPalette === "default" || r.plantPalette === "autumn" || r.plantPalette === "ink") s.plantPalette = r.plantPalette;
+  if ((LANGUAGES as readonly unknown[]).includes(r.language)) s.language = r.language as Language;
   return s;
 }
 
