@@ -27,7 +27,7 @@ const sentence = (...parts: (string | false | null | undefined)[]) => parts.filt
 function Row({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="flex min-h-(--layout-tapMin) items-center justify-between gap-3 px-4 text-base">
-      <span className="text-[#f1ecff]">{label}</span>
+      <span>{label}</span>
       <span className="text-[#9a85ff]">{value}</span>
     </div>
   );
@@ -182,15 +182,15 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
           {/* Язык */}
           <div className="overflow-hidden rounded-2xl bg-[#16103f]">
             <div className="flex min-h-(--layout-tapMin) items-center justify-between gap-3 px-4 text-base">
-              <label htmlFor={langId} className="text-[#f1ecff]">{t("lang.title")}</label>
+              <label htmlFor={langId}>{t("lang.title")}</label>
               <select
                 id={langId}
                 value={lang}
                 onChange={(e) => changeLanguage(e.target.value as Language)}
-                className="min-h-(--layout-tapMin) cursor-pointer bg-transparent text-right text-base text-[#9a85ff] outline-none [color-scheme:dark]"
+                className="min-h-(--layout-tapMin) cursor-pointer bg-transparent text-right text-base text-[#9a85ff] [color-scheme:dark]"
               >
                 {LANGUAGES.map((code) => (
-                  <option key={code} value={code} className="bg-[#16103f] text-[#f1ecff]">
+                  <option key={code} value={code}>
                     {LANGUAGE_NAMES[code]}
                   </option>
                 ))}
@@ -229,7 +229,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
             </p>
           )}
           {importError && (
-            <p role="alert" className="rounded-xl border border-danger bg-danger/10 px-4 py-3 text-sm text-danger">
+            <p role="alert" className="rounded-xl border border-danger px-4 py-3 text-sm text-danger">
               {importError}
             </p>
           )}
@@ -237,7 +237,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
           {/* Предпросмотр загрузки */}
           {parsed && plan && (
             <div className="space-y-3">
-              <p className="px-2 text-sm text-[#9a85ff]">
+              <p className="px-2 text-sm">
                 {sentence(
                   t("import.fileSummary", { name: parsed.name, entries: parsed.data.entries.length, photos: parsed.data.photoCount }),
                   parsed.data.skipped > 0 && t("import.skipped", { count: parsed.data.skipped }),
@@ -258,8 +258,8 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
               <fieldset className="divide-y divide-[#5b3dff]/30 overflow-hidden rounded-2xl bg-[#16103f]">
                 <legend className="sr-only">{t("import.howTitle")}</legend>
                 {(["merge", "replace"] as const).map((value) => (
-                  <label key={value} className="flex min-h-(--layout-tapMin) items-center gap-3 px-4 text-base text-[#f1ecff]">
-                    <input type="radio" name="backup-mode" checked={mode === value} onChange={() => setMode(value)} className="size-5 accent-[#5b3dff]" />
+                  <label key={value} className="flex min-h-(--layout-tapMin) items-center gap-3 px-4 text-base">
+                    <input type="radio" name="backup-mode" checked={mode === value} onChange={() => setMode(value)} className="size-5 accent-accent" />
                     {value === "merge" ? t("import.merge") : t("import.replace")}
                   </label>
                 ))}
