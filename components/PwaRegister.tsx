@@ -24,6 +24,23 @@ export function PwaRegister() {
     const start = async () => {
       try {
         const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
+        
+        // --- ДОБАВЛЕНО ДЛЯ АВТООБНОВЛЕНИЯ ---
+        // Ловим момент, когда нашлась новая версия
+        reg.addEventListener("updatefound", () => {
+          const newWorker = reg.installing;
+          if (!newWorker) return;
+          
+          newWorker.addEventListener("statechange", () => {
+            // Если новая версия скачалась и готова (installed), а старая всё ещё работает
+            if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
+              // Принудительно заставляем новую версию примениться прямо сейчас
+              newWorker.postMessage({ type: "SKIP_WAITING" });
+            }
+          });
+        });
+        // ------------------------------------
+
         // Запасной путь: просим SW сохранить то, что эта страница уже загрузила.
         const ready = await navigator.serviceWorker.ready;
         if (cancelled) return;
@@ -32,6 +49,7 @@ export function PwaRegister() {
           .map((e) => e.name)
           .filter((n) => n.startsWith(window.location.origin));
         ready.active?.postMessage({ type: "CACHE_URLS", urls: [window.location.pathname, ...urls] });
+        
         // Проверка обновлений при возвращении в приложение (на телефоне оно месяцами «спит» в фоне).
         const check = () => {
           if (document.visibilityState === "visible") void reg.update().catch(() => undefined);
