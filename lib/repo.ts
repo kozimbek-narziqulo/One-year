@@ -133,10 +133,37 @@ function writeOrThrow(storage: StorageLike, key: string, value: string): void {
    рисунок растения; фото в него не попадают. Любой сбой сети лишь пишется в консоль. */
 
 interface CloudRow {
+  id?: unknown;
+  user_id?: unknown;
   date: unknown;
   body: unknown;
   mood: unknown;
   shape_id: unknown;
+}
+
+/**
+ * Кладёт строку из облака в карту записей (облако побеждает). Локальные фото записи сохраняются:
+ * в облаке их нет. Возвращает true, если запись изменилась.
+ */
+function mergeCloudRow(map: Record<DateKey, Entry>, row: CloudRow, t: number): boolean {
+  if (!isValidKey(row.date)) return false;
+  const prev = map[row.date];
+  const cloud = sanitizeEntry(
+    {
+      date: row.date,
+      body: row.body,
+      mood: row.mood,
+      shapeId: row.shape_id ?? undefined,
+      createdAt: prev?.createdAt ?? t,
+      updatedAt: prev?.updatedAt ?? t,
+      photos: prev?.photos,
+    },
+    t,
+  );
+  if (!cloud) return false;
+  if (prev && prev.body === cloud.body && prev.mood === cloud.mood && prev.shapeId === cloud.shapeId) return false;
+  map[row.date] = cloud;
+  return true;
 }
 
 /** Неблокирующая отправка записи в облако (upsert по паре user_id + date). */
@@ -176,6 +203,24 @@ async function deleteEntryFromCloud(date: DateKey): Promise<void> {
   }
 }
 
+/** Неблокирующая отправка нескольких записей (импорт). */
+async function pushEntriesToCloud(entries: readonly Entry[]): Promise<void> {
+  if (entries.length === 0) return;
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const { error } = await supabase.from("entries").upsert(
+      entries.map((e) => ({ user_id: user.id, date: e.date, body: e.body, mood: e.mood, shape_id: e.shapeId ?? null })),
+      { onConflict: "user_id,date" },
+    );
+    if (error) throw error;
+  } catch (e) {
+    console.warn("[garden] не удалось отправить записи в облако:", e);
+  }
+}
+
 export interface RepoOptions {
   now?: () => Date;
   persistent?: boolean;
@@ -185,6 +230,8 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
   const now = options.now ?? (() => new Date());
   const persistent = options.persistent ?? true;
   const listeners = new Set<() => void>();
+  // id строки в облаке -> дата: по нему понимаем, какую запись удалили на другом устройстве (в событии удаления есть только id).
+  const cloudIds = new Map<string, string>();
   let state: GardenState = load();
 
   function load(): GardenState {
@@ -289,7 +336,7 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
      */
     async syncWithCloud(userId: string): Promise<void> {
       try {
-        const { data, error } = await supabase.from("entries").select("date, body, mood, shape_id").eq("user_id", userId);
+        const { data, error } = await supabase.from("entries").select("id, date, body, mood, shape_id").eq("user_id", userId);
         if (error) throw error;
         if (!data || data.length === 0) return;
         const t = now().getTime();
@@ -297,24 +344,8 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
         const next: Record<DateKey, Entry> = { ...state.entries };
         let changed = 0;
         for (const row of data as CloudRow[]) {
-          if (!isValidKey(row.date)) continue;
-          const prev = next[row.date];
-          const cloud = sanitizeEntry(
-            {
-              date: row.date,
-              body: row.body,
-              mood: row.mood,
-              shapeId: row.shape_id ?? undefined,
-              createdAt: prev?.createdAt ?? t,
-              updatedAt: prev?.updatedAt ?? t,
-              photos: prev?.photos,
-            },
-            t,
-          );
-          if (!cloud) continue;
-          if (prev && prev.body === cloud.body && prev.mood === cloud.mood && prev.shapeId === cloud.shapeId) continue;
-          next[row.date] = cloud;
-          changed += 1;
+          if (typeof row.id === "string" && typeof row.date === "string") cloudIds.set(row.id, row.date);
+          if (mergeCloudRow(next, row, t)) changed += 1;
         }
         if (changed === 0) return;
         // changes = 0: данные пришли из облака, это не повод напоминать про файловую копию.
@@ -322,6 +353,40 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
       } catch (e) {
         console.warn("[garden] не удалось синхронизировать с облаком:", e);
       }
+    },
+
+    /**
+     * Живая синхронизация: изменения с других устройств приходят сразу (Supabase Realtime).
+     * Возвращает функцию отписки.
+     */
+    subscribeToCloud(userId: string): () => void {
+      const channel = supabase
+        .channel(`entries-${userId}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "entries" }, (payload) => {
+          try {
+            if (payload.eventType === "DELETE") {
+              const id = (payload.old as { id?: unknown }).id;
+              const date = typeof id === "string" ? cloudIds.get(id) : undefined;
+              if (!date || !isValidKey(date) || !state.entries[date]) return;
+              cloudIds.delete(id as string);
+              const next = { ...state.entries };
+              delete next[date];
+              commitEntries(next, 0);
+              return;
+            }
+            const row = payload.new as CloudRow;
+            if (row.user_id !== userId) return; // чужие строки не берём, даже если сервер их прислал
+            if (typeof row.id === "string" && typeof row.date === "string") cloudIds.set(row.id, row.date);
+            const next: Record<DateKey, Entry> = { ...state.entries };
+            if (mergeCloudRow(next, row, now().getTime())) commitEntries(next, 0);
+          } catch (e) {
+            console.warn("[garden] не удалось применить изменение из облака:", e);
+          }
+        })
+        .subscribe();
+      return () => {
+        void supabase.removeChannel(channel);
+      };
     },
 
     getEntry: (date: DateKey): Entry | null => state.entries[date] ?? null,
@@ -391,11 +456,13 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
       const clean = sanitizeEntry(entry, now().getTime());
       if (!clean) throw new GardenError("invalid", "Некорректная запись.");
       commitEntries({ ...state.entries, [clean.date]: clean }, 1);
+      void pushEntryToCloud(clean);
     },
 
     /** Подменить все записи (импорт). changes: сколько записей добавлено/изменено/удалено. */
     setAllEntries(next: Record<DateKey, Entry>, changes: number): void {
       commitEntries({ ...next }, changes);
+      void pushEntriesToCloud(Object.values(next));
     },
 
     updateSettings(patch: Partial<Settings>): Settings {

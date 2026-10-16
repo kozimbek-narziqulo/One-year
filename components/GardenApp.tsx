@@ -8,6 +8,7 @@ import { shiftKey } from "../lib/dayKeys.ts";
 import { formatDayShort } from "../lib/i18n.ts";
 import { referencedPhotoIds } from "../lib/photos.ts";
 import { shouldNudgeBackup } from "../lib/repo.ts";
+import { supabase } from "../lib/supabase";
 import { LIMITS, type Entry, type PlantInfo } from "../lib/types.ts";
 import { BackupPanel, type AccountSession } from "./BackupPanel.tsx";
 import { EntryModal } from "./EntryModal.tsx";
@@ -308,14 +309,50 @@ type GardenState = NonNullable<ReturnType<typeof useGardenState>>;
  * Внешний слой: ждёт загрузки хранилища и подключает язык из настроек.
  * Хук useT() работает только внутри провайдера, поэтому весь экран вынесен в GardenScreen.
  */
-export function GardenApp({ session }: { session?: AccountSession | null }) {
+export function GardenApp({ session: sessionProp }: { session?: AccountSession | null }) {
   const state = useGardenState();
+
+  // Если страница не передала session (например, в page.tsx стоит просто <GardenApp />), берём её у Supabase сами.
+  // Так блок «Аккаунт» и синхронизация работают в любом случае.
+  const [ownSession, setOwnSession] = useState<AccountSession | null>(null);
+  useEffect(() => {
+    if (sessionProp !== undefined) return;
+    let alive = true;
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (alive) setOwnSession(data.session);
+      })
+      .catch((e: unknown) => console.warn("[garden] не удалось получить сессию:", e));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, next) => {
+      if (alive) setOwnSession(next);
+    });
+    return () => {
+      alive = false;
+      sub.subscription.unsubscribe();
+    };
+  }, [sessionProp]);
+
+  const session = sessionProp !== undefined ? sessionProp : ownSession;
   const userId = session?.user?.id;
 
-  // Вошли в аккаунт: один раз подтягиваем записи из облака. Локальные данные и фото при этом не теряются.
+  // Вошли в аккаунт: подтягиваем записи из облака и слушаем изменения с других устройств в реальном времени.
+  // Когда приложение возвращается из фона или появляется сеть, подтягиваем заново: соединение могло уснуть.
   useEffect(() => {
     if (!userId) return;
-    void getRepo().syncWithCloud(userId);
+    const repo = getRepo();
+    void repo.syncWithCloud(userId);
+    const unsubscribe = repo.subscribeToCloud(userId);
+    const resync = () => {
+      if (document.visibilityState === "visible") void repo.syncWithCloud(userId);
+    };
+    document.addEventListener("visibilitychange", resync);
+    window.addEventListener("online", resync);
+    return () => {
+      unsubscribe();
+      document.removeEventListener("visibilitychange", resync);
+      window.removeEventListener("online", resync);
+    };
   }, [userId]);
 
   if (!state) return <Skeleton />;
