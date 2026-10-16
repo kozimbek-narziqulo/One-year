@@ -34,7 +34,7 @@ export default function Page() {
 
   return (
     <main className="relative min-h-screen bg-slate-950">
-      <GardenApp />
+      <GardenApp session={session} />
       {!session && <AuthModal />}
     </main>
   );
