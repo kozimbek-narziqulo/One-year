@@ -308,8 +308,16 @@ type GardenState = NonNullable<ReturnType<typeof useGardenState>>;
  * Внешний слой: ждёт загрузки хранилища и подключает язык из настроек.
  * Хук useT() работает только внутри провайдера, поэтому весь экран вынесен в GardenScreen.
  */
-export function GardenApp() {
+export function GardenApp({ session }: { session?: { user?: { id?: string } | null } | null }) {
   const state = useGardenState();
+  const userId = session?.user?.id;
+
+  // Вошли в аккаунт: один раз подтягиваем записи из облака. Локальные данные и фото при этом не теряются.
+  useEffect(() => {
+    if (!userId) return;
+    void getRepo().syncWithCloud(userId);
+  }, [userId]);
+
   if (!state) return <Skeleton />;
   return (
     <I18nProvider lang={state.settings.language}>

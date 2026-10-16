@@ -15,6 +15,7 @@
 
 import { isQuotaError, type StorageLike } from "./storage.ts";
 import { compareKeys, isValidKey, todayKey, type DateKey } from "./date.ts";
+import { supabase } from "./supabase.ts";
 import {
   DEFAULT_META,
   DEFAULT_SETTINGS,
@@ -127,6 +128,54 @@ function writeOrThrow(storage: StorageLike, key: string, value: string): void {
   }
 }
 
+/* ---------- облако (Supabase) ----------
+   Локальное хранилище остаётся главным и синхронным. Облако получает только текст, дату, настроение и
+   рисунок растения; фото в него не попадают. Любой сбой сети лишь пишется в консоль. */
+
+interface CloudRow {
+  date: unknown;
+  body: unknown;
+  mood: unknown;
+  shape_id: unknown;
+}
+
+/** Неблокирующая отправка записи в облако (upsert по паре user_id + date). */
+async function pushEntryToCloud(entry: Entry): Promise<void> {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const { error } = await supabase.from("entries").upsert(
+      {
+        user_id: user.id,
+        date: entry.date,
+        body: entry.body,
+        mood: entry.mood,
+        shape_id: entry.shapeId ?? null,
+      },
+      { onConflict: "user_id,date" },
+    );
+    if (error) throw error;
+  } catch (e) {
+    console.warn("[garden] не удалось отправить запись в облако:", e);
+  }
+}
+
+/** Неблокирующее удаление записи из облака. */
+async function deleteEntryFromCloud(date: DateKey): Promise<void> {
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const { error } = await supabase.from("entries").delete().eq("user_id", user.id).eq("date", date);
+    if (error) throw error;
+  } catch (e) {
+    console.warn("[garden] не удалось удалить запись в облаке:", e);
+  }
+}
+
 export interface RepoOptions {
   now?: () => Date;
   persistent?: boolean;
@@ -234,6 +283,47 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
       emit();
     },
 
+    /**
+     * Подтянуть записи из облака. При конфликте дат облако побеждает, но локальные фото записи сохраняются
+     * (в облаке их нет). Записи, которых нет в облаке, остаются на месте.
+     */
+    async syncWithCloud(userId: string): Promise<void> {
+      try {
+        const { data, error } = await supabase.from("entries").select("date, body, mood, shape_id").eq("user_id", userId);
+        if (error) throw error;
+        if (!data || data.length === 0) return;
+        const t = now().getTime();
+        // Берём состояние уже после ожидания ответа: за это время запись могли изменить.
+        const next: Record<DateKey, Entry> = { ...state.entries };
+        let changed = 0;
+        for (const row of data as CloudRow[]) {
+          if (!isValidKey(row.date)) continue;
+          const prev = next[row.date];
+          const cloud = sanitizeEntry(
+            {
+              date: row.date,
+              body: row.body,
+              mood: row.mood,
+              shapeId: row.shape_id ?? undefined,
+              createdAt: prev?.createdAt ?? t,
+              updatedAt: prev?.updatedAt ?? t,
+              photos: prev?.photos,
+            },
+            t,
+          );
+          if (!cloud) continue;
+          if (prev && prev.body === cloud.body && prev.mood === cloud.mood && prev.shapeId === cloud.shapeId) continue;
+          next[row.date] = cloud;
+          changed += 1;
+        }
+        if (changed === 0) return;
+        // changes = 0: данные пришли из облака, это не повод напоминать про файловую копию.
+        commitEntries(next, 0);
+      } catch (e) {
+        console.warn("[garden] не удалось синхронизировать с облаком:", e);
+      }
+    },
+
     getEntry: (date: DateKey): Entry | null => state.entries[date] ?? null,
 
     /** Записи по возрастанию даты. */
@@ -281,6 +371,7 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
       } catch {
         /* ignore */
       }
+      void pushEntryToCloud(entry);
       return entry;
     },
 
@@ -291,6 +382,7 @@ export function createRepo(storage: StorageLike, options: RepoOptions = {}) {
       const next = { ...state.entries };
       delete next[date];
       commitEntries(next, 1);
+      void deleteEntryFromCloud(date);
       return prev;
     },
 
