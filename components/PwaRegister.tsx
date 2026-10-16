@@ -2,6 +2,9 @@
 
 import { useEffect } from "react";
 
+/** Как часто проверять новую версию, пока приложение открыто (мс). */
+const UPDATE_CHECK_MS = 30 * 60 * 1000;
+
 /** Регистрирует service worker (только в рабочей сборке) и следит за обновлениями. Ничего не рисует. */
 export function PwaRegister() {
   useEffect(() => {
@@ -21,25 +24,22 @@ export function PwaRegister() {
     navigator.serviceWorker.addEventListener("controllerchange", onChange);
 
     let cancelled = false;
+    let cleanup: (() => void) | undefined;
+
     const start = async () => {
       try {
         const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/", updateViaCache: "none" });
-        
-        // --- ДОБАВЛЕНО ДЛЯ АВТООБНОВЛЕНИЯ ---
-        // Ловим момент, когда нашлась новая версия
-        reg.addEventListener("updatefound", () => {
-          const newWorker = reg.installing;
-          if (!newWorker) return;
-          
-          newWorker.addEventListener("statechange", () => {
-            // Если новая версия скачалась и готова (installed), а старая всё ещё работает
-            if (newWorker.state === "installed" && navigator.serviceWorker.controller) {
-              // Принудительно заставляем новую версию примениться прямо сейчас
-              newWorker.postMessage({ type: "SKIP_WAITING" });
-            }
+        if (cancelled) return;
+
+        // Нашлась новая версия: просим применить её сразу, не дожидаясь закрытия приложения.
+        const onUpdateFound = () => {
+          const worker = reg.installing;
+          if (!worker) return;
+          worker.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) worker.postMessage({ type: "SKIP_WAITING" });
           });
-        });
-        // ------------------------------------
+        };
+        reg.addEventListener("updatefound", onUpdateFound);
 
         // Запасной путь: просим SW сохранить то, что эта страница уже загрузила.
         const ready = await navigator.serviceWorker.ready;
@@ -49,12 +49,27 @@ export function PwaRegister() {
           .map((e) => e.name)
           .filter((n) => n.startsWith(window.location.origin));
         ready.active?.postMessage({ type: "CACHE_URLS", urls: [window.location.pathname, ...urls] });
-        
-        // Проверка обновлений при возвращении в приложение (на телефоне оно месяцами «спит» в фоне).
+
+        // Проверка обновлений. На iPhone приложение месяцами «спит» в фоне, а событие visibilitychange
+        // срабатывает не всегда, поэтому слушаем ещё focus, pageshow и online, плюс проверяем по таймеру.
         const check = () => {
           if (document.visibilityState === "visible") void reg.update().catch(() => undefined);
         };
+        check();
         document.addEventListener("visibilitychange", check);
+        window.addEventListener("focus", check);
+        window.addEventListener("pageshow", check);
+        window.addEventListener("online", check);
+        const timer = window.setInterval(check, UPDATE_CHECK_MS);
+
+        cleanup = () => {
+          reg.removeEventListener("updatefound", onUpdateFound);
+          document.removeEventListener("visibilitychange", check);
+          window.removeEventListener("focus", check);
+          window.removeEventListener("pageshow", check);
+          window.removeEventListener("online", check);
+          window.clearInterval(timer);
+        };
       } catch {
         /* без офлайна приложение всё равно работает */
       }
@@ -64,6 +79,7 @@ export function PwaRegister() {
 
     return () => {
       cancelled = true;
+      cleanup?.();
       navigator.serviceWorker.removeEventListener("controllerchange", onChange);
     };
   }, []);

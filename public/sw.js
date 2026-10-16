@@ -3,7 +3,9 @@
  * Как это устроено:
  *  - при установке в кэш кладётся весь собранный сайт (список файлов подставляет scripts/build-sw.mjs
  *    после `next build`; без него работает запасной вариант: кэшируется то, что страница уже загрузила);
- *  - дальше всё берётся из кэша (cache-first): сайт целиком статический, данные лежат в LocalStorage;
+ *  - страница при открытии сначала берётся из сети (до 3 секунд), и только без сети отдаётся копия из кэша:
+ *    так новая версия приходит сразу, а офлайн всё продолжает работать;
+ *  - остальные файлы берутся из кэша (cache-first): имена файлов содержат хэш, старый файл не подменит новый;
  *  - новая версия сайта = новый хэш в VERSION = новый кэш; старые кэши удаляются при активации.
  *
  * Записи пользователя этот файл не трогает: они в LocalStorage, не в кэше.
@@ -11,6 +13,8 @@
 const VERSION = /*__VERSION__*/ "dev";
 const PRECACHE = /*__PRECACHE__*/ ["/"];
 const CACHE = `garden-${VERSION}`;
+// Сколько ждать сеть при открытии страницы, прежде чем показать копию из кэша.
+const NAV_TIMEOUT_MS = 3000;
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -36,6 +40,11 @@ self.addEventListener("activate", (event) => {
       await self.clients.claim();
     })(),
   );
+});
+
+// Страница просит применить новую версию сразу (на случай, если она ждёт в очереди).
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") void self.skipWaiting();
 });
 
 // Страница присылает список того, что она реально загрузила (запасной путь, если postbuild не запускался).
@@ -70,17 +79,22 @@ self.addEventListener("fetch", (event) => {
     (async () => {
       const cache = await caches.open(CACHE);
 
-      // Переходы по адресам: у сайта одна страница, отдаём её из кэша.
+      // Переходы по адресам: сначала свежая страница из сети, без сети (или при медленной сети) копия из кэша.
       if (req.mode === "navigate") {
-        const cached = (await cache.match(url.pathname)) || (await cache.match("/"));
-        if (cached) {
-          // Тихо обновляем копию, если сеть есть (появится при следующем открытии после новой версии SW).
-          return cached;
-        }
+        const fromCache = async () => (await cache.match(url.pathname)) || (await cache.match("/"));
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), NAV_TIMEOUT_MS);
         try {
-          return await fetch(req);
+          const res = await fetch(req.url, { cache: "no-cache", redirect: "manual", signal: ctrl.signal });
+          clearTimeout(timer);
+          if (res.ok && res.type === "basic") cache.put(url.pathname, res.clone());
+          return res;
         } catch {
-          return (await cache.match("/")) || new Response("Нет сети, и страница ещё не сохранена.", { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } });
+          clearTimeout(timer);
+          return (
+            (await fromCache()) ||
+            new Response("Нет сети, и страница ещё не сохранена.", { status: 503, headers: { "content-type": "text/plain; charset=utf-8" } })
+          );
         }
       }
 
