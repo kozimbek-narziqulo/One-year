@@ -39,14 +39,6 @@ export default function AuthModal() {
           >
             <span>Войти через Google</span>
           </button>
-
-          <button
-            onClick={() => handleSocialLogin('apple')}
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-3 bg-black text-white font-medium py-3 px-4 rounded-xl border border-slate-700 hover:bg-slate-950 transition shadow-md"
-          >
-            <span>Войти через Apple</span>
-          </button>
         </div>
       </div>
     </div>
