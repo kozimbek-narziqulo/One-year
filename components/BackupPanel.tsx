@@ -6,12 +6,18 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { applyImportWithPhotos, backupFilename, buildBackupZip, planImport, readBackupFile, type ImportMode, type ParsedBackup } from "../lib/backup.ts";
 import { downloadBlob } from "../lib/download.ts";
+import { supabase } from "../lib/supabase.ts";
 import { errorText, formatDateFull, LANGUAGES, LANGUAGE_NAMES, type Language } from "../lib/i18n.ts";
 import type { PhotoStore } from "../lib/photos.ts";
 import { photosOf } from "../lib/types.ts";
 import type { GardenState, Repo } from "../lib/repo.ts";
 import { useT } from "./I18nProvider.tsx";
 import { Button, IconButton, IconClose } from "./ui.tsx";
+
+/** Часть сессии Supabase, которая нужна панели. Настоящая Session из supabase-js под этот тип подходит. */
+export interface AccountSession {
+  user?: { id?: string | undefined; email?: string | null | undefined } | null | undefined;
+}
 
 export interface BackupPanelProps {
   repo: Repo;
@@ -20,6 +26,8 @@ export interface BackupPanelProps {
   state: GardenState;
   onClose: () => void;
   onMessage: (text: string) => void;
+  /** Текущая сессия: из неё берётся email для блока «Аккаунт». */
+  session?: AccountSession | null | undefined;
 }
 
 const sentence = (...parts: (string | false | null | undefined)[]) => parts.filter(Boolean).join(" ");
@@ -33,7 +41,7 @@ function Row({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: BackupPanelProps) {
+export function BackupPanel({ repo, photoStore, state, onClose, onMessage, session }: BackupPanelProps) {
   const { t } = useT();
   const lang = state.settings.language;
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -46,6 +54,7 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
   const [progress, setProgress] = useState<string | null>(null);
   const [exportNote, setExportNote] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
 
   useEffect(() => {
     const dlg = dialogRef.current;
@@ -126,6 +135,20 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
     }
   }
 
+  async function signOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      onClose();
+    } catch (e) {
+      console.warn("[garden] не удалось выйти из аккаунта:", e);
+      onMessage("Не удалось выйти. Проверьте интернет и попробуйте ещё раз.");
+      setSigningOut(false);
+    }
+  }
+
   function changeLanguage(language: Language) {
     try {
       repo.updateSettings({ language });
@@ -165,6 +188,21 @@ export function BackupPanel({ repo, photoStore, state, onClose, onMessage }: Bac
             <p role="alert" className={warn}>
               {t("panel.notPersistent")}
             </p>
+          )}
+
+          {/* Аккаунт */}
+          {session?.user && (
+            <div className="overflow-hidden rounded-2xl bg-[#16103f]">
+              <div className="flex min-h-(--layout-tapMin) items-center justify-between gap-3 px-4 text-base">
+                <span>Аккаунт</span>
+                <span className="min-w-0 truncate text-[#9a85ff]">{session.user.email ?? ""}</span>
+              </div>
+              <div className="border-t border-[#5b3dff]/30 p-2 [&>button]:w-full">
+                <Button variant="secondary" onClick={() => void signOut()} disabled={signingOut}>
+                  Выйти
+                </Button>
+              </div>
+            </div>
           )}
 
           {/* Статистика */}

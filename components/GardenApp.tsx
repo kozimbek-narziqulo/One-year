@@ -9,7 +9,7 @@ import { formatDayShort } from "../lib/i18n.ts";
 import { referencedPhotoIds } from "../lib/photos.ts";
 import { shouldNudgeBackup } from "../lib/repo.ts";
 import { LIMITS, type Entry, type PlantInfo } from "../lib/types.ts";
-import { BackupPanel } from "./BackupPanel.tsx";
+import { BackupPanel, type AccountSession } from "./BackupPanel.tsx";
 import { EntryModal } from "./EntryModal.tsx";
 import { GardenDots } from "./GardenDots.tsx";
 import { IconFlower, IconGardenGroup } from "./GardenIcons.tsx";
@@ -308,7 +308,7 @@ type GardenState = NonNullable<ReturnType<typeof useGardenState>>;
  * Внешний слой: ждёт загрузки хранилища и подключает язык из настроек.
  * Хук useT() работает только внутри провайдера, поэтому весь экран вынесен в GardenScreen.
  */
-export function GardenApp({ session }: { session?: { user?: { id?: string } | null } | null }) {
+export function GardenApp({ session }: { session?: AccountSession | null }) {
   const state = useGardenState();
   const userId = session?.user?.id;
 
@@ -321,12 +321,12 @@ export function GardenApp({ session }: { session?: { user?: { id?: string } | nu
   if (!state) return <Skeleton />;
   return (
     <I18nProvider lang={state.settings.language}>
-      <GardenScreen state={state} />
+      <GardenScreen state={state} session={session} />
     </I18nProvider>
   );
 }
 
-function GardenScreen({ state }: { state: GardenState }) {
+function GardenScreen({ state, session }: { state: GardenState; session?: AccountSession | null | undefined }) {
   const { t, lang } = useT();
   const today = useToday();
   const repo = getRepo();
@@ -680,7 +680,7 @@ function GardenScreen({ state }: { state: GardenState }) {
           onDeleted={onDeleted}
         />
       )}
-      {panelOpen && <BackupPanel repo={repo} photoStore={photoStore} state={state} onClose={() => setPanelOpen(false)} onMessage={(text) => showToast(text, { ms: 6000 })} />}
+      {panelOpen && <BackupPanel repo={repo} photoStore={photoStore} state={state} onClose={() => setPanelOpen(false)} onMessage={(text) => showToast(text, { ms: 6000 })} session={session} />}
       <Toast toast={toast} onDismiss={dismissToast} />
     </>
   );
