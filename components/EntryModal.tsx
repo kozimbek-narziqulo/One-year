@@ -87,6 +87,26 @@ function CheckButton({ disabled }: { disabled: boolean }) {
   );
 }
 
+/** Корзина в той же манере, что крестик и галочка. Удаляет запись сразу; вернуть можно кнопкой «Вернуть» в уведомлении. */
+function TrashButton({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+  const { t } = useT();
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      aria-label={t("common.delete")}
+      className="grid min-h-(--layout-tapMin) min-w-(--layout-tapMin) place-items-center rounded-full text-(color:--ink-soft) transition-transform duration-(--duration-fast) active:scale-90 disabled:opacity-40"
+    >
+      <svg viewBox="0 0 32 32" className="size-7" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable={false}>
+        <path d="M6 9.2c4.7-.6 15.3-.6 20 0M12.4 8.6c.2-2.3.9-3.4 3.6-3.4s3.4 1.1 3.6 3.4" />
+        <path d="M8.6 9.6c.5 5.9.9 12 1.5 16.3.2 1.1.9 1.6 1.9 1.6h8c1 0 1.7-.5 1.9-1.6.6-4.3 1-10.4 1.5-16.3" />
+        <path d="M13.2 14.2l.3 8.6M18.8 14.2l-.3 8.6" />
+      </svg>
+    </button>
+  );
+}
+
 /** Файл новой (ещё не сохранённой) фотографии для превью. Если поле в PhotoItem называется иначе, поправьте список ключей. */
 function previewSource(item: PhotoItem): Blob | null {
   const r = item as unknown as Record<string, unknown>;
@@ -431,7 +451,11 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
             className="grid shrink-0 grid-cols-[auto_1fr_auto] items-center gap-2 px-3 md:px-5"
             style={{ paddingTop: "max(0.75rem, env(safe-area-inset-top))" }}
           >
-            <SketchCloseButton label={t("common.close")} onClick={() => dialogRef.current?.close()} />
+            <div className="flex items-center">
+              <SketchCloseButton label={t("common.close")} onClick={() => dialogRef.current?.close()} />
+              {/* Пустое место размером с корзину: так дата остаётся ровно по центру */}
+              {existing && <span aria-hidden="true" className="min-w-(--layout-tapMin)" />}
+            </div>
             <div className="relative justify-self-center">
               <h2 id={titleId} className="sr-only">
                 {dateLong}
@@ -455,7 +479,10 @@ export function EntryModal({ repo, photoStore, initialDate, today, onClose, onSa
                 className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
               />
             </div>
-            <CheckButton disabled={saving || photoBusy} />
+            <div className="flex items-center">
+              {existing && <TrashButton disabled={saving} onClick={remove} />}
+              <CheckButton disabled={saving || photoBusy} />
+            </div>
           </header>
 
           <div className="flex-1 space-y-4 overflow-y-auto px-6 pt-6 md:px-10 md:pt-8" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
