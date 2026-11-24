@@ -22,7 +22,7 @@ The interface currently supports **Russian, English, and Spanish**.
 
 ## Screenshots
 
-Product screenshots will be added here once a public demo is available. The repository currently includes application icons, but not representative in-app screenshots.
+![Real application sign-in screen](docs/screenshots/sign-in.png)\n\nThe screenshot above is a real capture of the application's Google sign-in screen. The journal and garden views require an authenticated session; no synthetic entries or fabricated screens are presented as product captures. Additional screenshots will be added after the authenticated flows can be safely demonstrated.
 
 ## Technology
 
