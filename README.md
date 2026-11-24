@@ -15,7 +15,7 @@ The interface currently supports **Russian, English, and Spanish**.
 - **Daily timeline and memory feed** — revisit previous entries and browse a chronological feed.
 - **Photo attachments** — add up to five photos to an entry. Images are resized and compressed in the browser before being stored locally.
 - **Local data storage** — journal text and settings are stored in the browser; photo files are stored in IndexedDB.
-- **Optional account-backed sync** — when signed in, entry text, date, mood, and plant shape are synchronized with Supabase. Photos remain on the device and are included in local backup files, not cloud sync.
+- **Google sign-in and account sync** — the current interface asks users to sign in with Google. Entry text, date, mood, and plant shape are synchronized with Supabase. Photos remain on the device and are included in local backup files, not cloud sync.
 - **Backup and restore** — export entries and photos together as a ZIP archive and import a backup later.
 - **Progressive Web App** — installable on supported devices, with a service worker that caches application assets for offline access.
 - **Accessibility and preferences** — mood color palette options, multiple plant palettes, responsive layouts, and reduced-motion support.
@@ -29,7 +29,7 @@ Product screenshots will be added here once a public demo is available. The repo
 - [Next.js](https://nextjs.org/) and [React](https://react.dev/)
 - [TypeScript](https://www.typescriptlang.org/)
 - [Tailwind CSS](https://tailwindcss.com/)
-- [Supabase](https://supabase.com/) for authentication, optional entry sync, and realtime updates
+- [Supabase](https://supabase.com/) for Google authentication, entry sync, and realtime updates
 - Browser Local Storage and IndexedDB for local data
 - Node.js test runner and `fake-indexeddb` for automated tests
 
@@ -39,7 +39,7 @@ Product screenshots will be added here once a public demo is available. The repo
 
 - Node.js **20.9 or newer**
 - npm
-- A Supabase project if you want to use Google sign-in and cloud synchronization
+- A Supabase project (required by the current Google sign-in flow and cloud synchronization)
 
 ### 1. Clone and install
 
@@ -66,7 +66,7 @@ These values are exposed to the browser by design. **Never put a Supabase `servi
 
 ### 3. Configure Supabase
 
-The current app uses Google OAuth and an `entries` table. Review [`supabase/schema.sql`](supabase/schema.sql) and apply the schema and Row Level Security (RLS) policies to your own Supabase project.
+The current app requires Google OAuth sign-in and uses an `entries` table. Review [`supabase/schema.sql`](supabase/schema.sql), confirm that it matches your database, and apply the schema and Row Level Security (RLS) policies to your Supabase project.
 
 In Supabase, configure Google as an authentication provider and add your local and production URLs to the allowed redirect URLs. Do not disable RLS on user data.
 
@@ -90,7 +90,7 @@ The build uses Next.js static export. The `postbuild` script prepares the servic
 
 ## Data and privacy
 
-- Entry text, mood, date, and plant shape are stored in browser storage and, for signed-in users, synchronized to the configured Supabase project.
+- Entry text, mood, date, and plant shape are stored in browser storage and synchronized to the configured Supabase project for signed-in users. The current interface prompts users to sign in with Google before accessing the journal.
 - Photo files are stored in the browser's IndexedDB. They are not uploaded by the current cloud-sync implementation.
 - ZIP backups can contain journal text and personal photos. Store backup files carefully and do not attach real personal entries or photos to public issues.
 - Clearing browser data, using a different browser profile, or switching devices can remove or separate local data. Export a backup regularly.
