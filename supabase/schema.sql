@@ -58,7 +58,7 @@ begin
       and schemaname = 'public'
       and tablename = 'entries'
   ) then
-    alter publication supabase_realtime add table public.entries;
+    execute 'alter publication supabase_realtime add table public.entries';
   end if;
 end
 $$;
