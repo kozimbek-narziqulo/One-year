@@ -147,7 +147,7 @@ test("backup: file name and bad files", () => {
   bad("not json");
   bad("[]");
   bad(JSON.stringify({ app: "other", version: 1, entries: [] }));
-  bad(JSON.stringify({ app: "garden-journal", version: 2, entries: [] }));
+  bad(JSON.stringify({ app: "garden-journal", version: 3, entries: [] }));
   bad(JSON.stringify({ app: "garden-journal", version: 1 }));
   bad(JSON.stringify({ app: "garden-journal", version: 1, entries: [{ date: "nope", body: 1 }] }));
   const ok = parseBackup(JSON.stringify({ app: "garden-journal", version: 1, entries: [{ date: "2026-01-01", body: "a", mood: 3 }, { date: "bad" }] }));
