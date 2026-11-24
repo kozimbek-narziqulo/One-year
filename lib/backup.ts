@@ -193,6 +193,11 @@ function parseBackupData(text: string, nowMs: number, hasPhoto: PhotoPresence): 
       skipped++;
       continue;
     }
+    // A text-only legacy backup cannot restore a photo-only entry; do not import it as an empty day.
+    if (photosOf(e).length === 0 && e.body.trim() === "" && e.mood === null) {
+      skipped++;
+      continue;
+    }
     if (compareKeys(e.date, today) > 0) {
       skipped++;
       skippedFuture++;

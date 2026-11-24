@@ -2,7 +2,8 @@
   "name": "garden-journal",
   "version": "0.1.0",
   "private": true,
-  "description": "Бесплатный дневник-сад: 365 клеток, записи только в вашем браузере",
+  "license": "MIT",
+  "description": "A privacy-conscious daily journal that grows into a visual garden throughout the year.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -11,7 +12,7 @@
     "postbuild": "node scripts/build-sw.mjs out"
   },
   "engines": {
-    "node": ">=20.9"
+    "node": ">=22.18.0"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

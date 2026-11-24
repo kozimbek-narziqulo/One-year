@@ -1,0 +1,62 @@
+name: Bug report
+description: Report a reproducible problem in One-year
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve One-year. Please do not include real journal entries, personal photos, email addresses, access tokens, or other private information.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the problem in a few sentences.
+      placeholder: When I try to...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Use synthetic example data only.
+      placeholder: |
+        1. Open...
+        2. Choose...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: Chrome 130, Safari 18, Firefox 132...
+    validations:
+      required: false
+  - type: input
+    id: device
+    attributes:
+      label: Device and operating system
+      placeholder: iPhone 15 / iOS 18, Windows 11 laptop...
+    validations:
+      required: false
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Additional diagnostics (optional)
+      description: Remove personal data, URLs with tokens, and private information before sharing logs.
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have checked that this report contains no real journal content, private photos, credentials, or personal data.
+          required: true
