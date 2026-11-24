@@ -2,6 +2,7 @@
   "name": "garden-journal",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "A privacy-conscious daily journal that grows into a visual garden throughout the year.",
   "scripts": {
     "dev": "next dev",
