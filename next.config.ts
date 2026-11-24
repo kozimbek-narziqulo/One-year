@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
   trailingSlash: true,
   images: { unoptimized: true },
   reactStrictMode: true,
+  // Keep Next.js rooted in this app when its parent folder also contains a lockfile.
+  turbopack: { root: process.cwd() },
 };
 
 export default nextConfig;
