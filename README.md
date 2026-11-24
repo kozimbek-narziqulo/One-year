@@ -46,7 +46,7 @@ Product screenshots will be added here once a public demo is available. The repo
 ```bash
 git clone https://github.com/kozimbek-narziqulo/One-year.git
 cd One-year
-npm install
+npm ci
 ```
 
 ### 2. Configure environment variables
