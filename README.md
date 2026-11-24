@@ -37,7 +37,7 @@ Product screenshots will be added here once a public demo is available. The repo
 
 ### Requirements
 
-- Node.js **20.9 or newer**
+- Node.js **22.18 or newer**
 - npm
 - A Supabase project (required by the current Google sign-in flow and cloud synchronization)
 
