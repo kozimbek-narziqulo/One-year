@@ -16,10 +16,16 @@
 # Deployments
 /.vercel/
 
-# Local environment files (keep only the example template)
+# Local environment files (keep only the safe template)
 /.env*
 !/.env.example
 /env.production
+.env.local
+.env.*.local
+
+# Private keys and certificates
+*.pem
+*.key
 
 # Logs
 npm-debug.log*
