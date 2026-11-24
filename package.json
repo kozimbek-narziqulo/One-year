@@ -2,7 +2,7 @@
   "name": "garden-journal",
   "version": "0.1.0",
   "private": true,
-  "description": "Бесплатный дневник-сад: 365 клеток, записи только в вашем браузере",
+  "description": "A privacy-conscious daily journal that grows into a visual garden throughout the year.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
