@@ -83,7 +83,7 @@ test("архив содержит backup.json, README и файлы фото", a
   const json = JSON.parse(new TextDecoder().decode(await z.read(z.entries.find((e) => e.name === "backup.json") as ZipEntry, 1e7)));
   assert.equal(json.app, BACKUP_APP_ID);
   assert.equal(json.version, 2);
-  assert.equal(backupFilename(NOW), `${"garden"}-${TODAY}.zip`);
+  assert.equal(backupFilename(NOW), `garden-backup-${TODAY}.zip`);
 });
 
 test("круг: экспорт, чистый телефон, импорт — записи и байты фото совпадают", async () => {
