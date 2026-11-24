@@ -142,7 +142,7 @@ test("backup: export then import into an empty app restores everything", () => {
 });
 
 test("backup: file name and bad files", () => {
-  assert.equal(backupFilename(new Date(2026, 9, 11)), "garden-backup-2026-10-11.json");
+  assert.equal(backupFilename(new Date(2026, 9, 11), "json"), "garden-backup-2026-10-11.json");
   const bad = (s: string) => assert.throws(() => parseBackup(s), BackupError);
   bad("not json");
   bad("[]");
